@@ -5,6 +5,7 @@
 
 #include "token.h"
 #include "indent_stack.h"
+#include "keyword_table.h"
 
 #define MAX_INDENT_DEPTH 128  /* maximum nesting depth */
 #define LEXER_BUFFER_SIZE 256 /* buffer for building token values */
