@@ -3,8 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "lexer/lexer.h"
-#include "lexer/token_types.h"
+#include "Model/lexer/lexer.h"
+#include "Model/lexer/token_types.h"
 
 /* Program version and name */
 #define PROGRAM_NAME "pytoc"

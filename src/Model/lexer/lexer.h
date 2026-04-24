@@ -29,6 +29,9 @@ typedef struct
     /* --- Buffer for building multi-character tokens --- */
     char buffer[LEXER_BUFFER_SIZE];
     int buffer_length;
+
+    /* --- Keyword lookup table --- */
+    KeywordTable keyword_table;
 } Lexer;
 
 /* Public functions */
