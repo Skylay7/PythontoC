@@ -3,8 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "Model/lexer/lexer.h"
-#include "Model/lexer/token_types.h"
+#include "../controller/compiler.h"
 
 /* Program version and name */
 #define PROGRAM_NAME "pytoc"
@@ -37,19 +36,15 @@ int main(int argc, char *argv[])
         return 1; /* Exit on file read error */
     }
 
-    /* Initialize lexer and scan all tokens */
-    Lexer lexer;
-    lexer_init(&lexer, source);
-
-    Token token;
-    do
-    {
-        token = lexer_next_token(&lexer);
-        printf("Line %d Col %d: type=%d value='%s'\n",
-               token.line, token.column, token.type, token.value);
-    } while (token.type != TOKEN_EOF);
+    int compile_status = compile(source, output_file);
 
     free(source);
+
+    if (compile_status != 0)
+    {
+        fprintf(stderr, "Error: compilation failed\n");
+        return 1;
+    }
     return 0;
 }
 
