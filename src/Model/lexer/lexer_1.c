@@ -19,13 +19,9 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* TODO: replace with real error handler module once implemented */
-static void report_error(const char *message, int line, int column)
+static void report_error(Lexer *lexer, const char *message, int line, int column)
 {
-    /* Placeholder — will call errors_add() from errors.c later */
-    (void)message;
-    (void)line;
-    (void)column;
+    error_list_add(lexer->errors, message, line, column);
 }
 
 /* ------------------------------------------------------------------ */
@@ -179,7 +175,7 @@ static int count_indent(Lexer *lexer)
         }
         else if (c == '\t')
         {
-            report_error("Tab character not allowed for indentation", lexer->line, lexer->column);
+            report_error(lexer, "Tab character not allowed for indentation", lexer->line, lexer->column);
             advance(lexer);
             return -1;
         }
@@ -230,7 +226,7 @@ static Token handle_indentation(Lexer *lexer)
         }
         if (indent_stack_peek(&lexer->indent_stack) != indent)
         {
-            report_error("Indentation level does not match any outer block", start_line, start_col);
+            report_error(lexer, "Indentation level does not match any outer block", start_line, start_col);
             return make_token(TOKEN_ERROR, "bad dedent", start_line, start_col);
         }
         lexer->pending_dedents--;
@@ -411,17 +407,18 @@ static Token scan_next_token_dfa(Lexer *lexer)
 /* scan_next_token_dfa instead of the individual scan_* functions)     */
 /* ------------------------------------------------------------------ */
 
-void lexer_init(Lexer *lexer, const char *source)
+void lexer_init(Lexer *lexer, const char *source, ErrorList *errors)
 {
-    lexer->source = source;
-    lexer->position = 0;
-    lexer->length = (int)strlen(source);
-    lexer->line = 1;
-    lexer->column = 1;
+    lexer->source          = source;
+    lexer->position        = 0;
+    lexer->length          = (int)strlen(source);
+    lexer->line            = 1;
+    lexer->column          = 1;
     lexer->pending_dedents = 0;
-    lexer->at_line_start = 1;
-    lexer->buffer_length = 0;
-    lexer->buffer[0] = '\0';
+    lexer->at_line_start   = 1;
+    lexer->buffer_length   = 0;
+    lexer->buffer[0]       = '\0';
+    lexer->errors          = errors;
 
     indent_stack_init(&lexer->indent_stack);
     indent_stack_push(&lexer->indent_stack, 0);
@@ -479,6 +476,7 @@ Token lexer_next_token(Lexer *lexer)
 
         if (current_char(lexer) == '#' || current_char(lexer) == '\n' || at_end(lexer))
         {
+            skip_whitespace_and_comments(lexer); /* consume '#...' up to '\n' */
             lexer->at_line_start = 1;
             return lexer_next_token(lexer);
         }

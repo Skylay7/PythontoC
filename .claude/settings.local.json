@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gcc -std=c99 -Wall -Wextra -I src/Model/lexer -I src/Model/errors -I src/controller src/View/main.c src/Model/lexer/lexer.c src/Model/lexer/indent_stack.c src/Model/lexer/keyword_table.c src/Model/errors/errors.c src/controller/compiler.c -o build/compiler)",
+      "Bash(build/pytoc.exe \"src/test/test.py\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(\"c:/Users/אילי/OneDrive/Desktop/PythontoC/build/pytoc.exe\" \"c:/Users/אילי/OneDrive/Desktop/PythontoC/src/test/test.py\")",
+      "Read(//tmp/**)"
+    ]
+  }
+}

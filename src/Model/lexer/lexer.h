@@ -6,6 +6,7 @@
 #include "token.h"
 #include "indent_stack.h"
 #include "keyword_table.h"
+#include "../errors/errors.h"
 
 #define MAX_INDENT_DEPTH 128  /* maximum nesting depth */
 #define LEXER_BUFFER_SIZE 256 /* buffer for building token values */
@@ -32,10 +33,13 @@ typedef struct
 
     /* --- Keyword lookup table --- */
     KeywordTable keyword_table;
+
+    /* --- Error list (owned by the caller, never NULL) --- */
+    ErrorList *errors;
 } Lexer;
 
 /* Public functions */
-void lexer_init(Lexer *lexer, const char *source);
+void lexer_init(Lexer *lexer, const char *source, ErrorList *errors);
 Token lexer_next_token(Lexer *lexer);
 
 #endif

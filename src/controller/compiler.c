@@ -29,7 +29,7 @@ static int token_list_append(TokenList *list, Token t)
 {
     if (list->count >= list->capacity)
     {
-        int    new_cap    = list->capacity * 2;
+        int new_cap = list->capacity * 2;
         Token *new_tokens = realloc(list->tokens, sizeof(Token) * (size_t)new_cap);
         if (!new_tokens)
             return -1;
@@ -103,7 +103,7 @@ int compile(const char *source, const char *output_file)
        TOKEN_ERROR tokens are recorded in the error list but do not stop
        the pipeline — the compiler continues to collect further errors. */
     Lexer lexer;
-    lexer_init(&lexer, source);
+    lexer_init(&lexer, source, &errors);
 
     TokenList token_list;
     if (token_list_init(&token_list) != 0)
@@ -126,6 +126,8 @@ int compile(const char *source, const char *output_file)
             error_list_add(&errors, "Memory allocation failed during tokenization", 0, 0);
             break;
         }
+
+        printf("Token: type=%d, value='%s', line=%d, column=%d\n", tok.type, tok.value, tok.line, tok.column);
     } while (tok.type != TOKEN_EOF);
 
     /* --- Stage 2: Parser ---

@@ -4,13 +4,9 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* TODO: thread the shared ErrorList pointer through the lexer so
-   lexer errors land in the same list as parser/semantic errors. */
-static void report_error(const char *message, int line, int column)
+static void report_error(Lexer *lexer, const char *message, int line, int column)
 {
-    (void)message;
-    (void)line;
-    (void)column;
+    error_list_add(lexer->errors, message, line, column);
 }
 
 /* ------------------------------------------------------------------ */
@@ -162,7 +158,7 @@ static int count_indent(Lexer *lexer)
         }
         else if (c == '\t')
         {
-            report_error("Tab character not allowed for indentation", lexer->line, lexer->column);
+            report_error(lexer, "Tab character not allowed for indentation", lexer->line, lexer->column);
             advance(lexer);
             return -1;
         }
@@ -224,7 +220,7 @@ static Token handle_indentation(Lexer *lexer)
         }
         if (indent_stack_peek(&lexer->indent_stack) != indent)
         {
-            report_error("Indentation level does not match any outer block", start_line, start_col);
+            report_error(lexer, "Indentation level does not match any outer block", start_line, start_col);
             return make_token(TOKEN_ERROR, "bad dedent", start_line, start_col);
         }
         /* Return first DEDENT now; the rest are delivered via pending_dedents */
@@ -255,7 +251,7 @@ static Token scan_word(Lexer *lexer)
 
     if (!is_valid_identifier(buf))
     {
-        report_error("Invalid identifier", start_line, start_col);
+        report_error(lexer, "Invalid identifier", start_line, start_col);
         return make_token(TOKEN_ERROR, buf, start_line, start_col);
     }
 
@@ -313,7 +309,7 @@ static Token scan_string(Lexer *lexer)
     {
         if (current_char(lexer) == '\n')
         {
-            report_error("Unterminated string literal", start_line, start_col);
+            report_error(lexer, "Unterminated string literal", start_line, start_col);
             buf[i] = '\0';
             return make_token(TOKEN_ERROR, buf, start_line, start_col);
         }
@@ -324,7 +320,7 @@ static Token scan_string(Lexer *lexer)
 
     if (at_end(lexer))
     {
-        report_error("Unterminated string literal", start_line, start_col);
+        report_error(lexer, "Unterminated string literal", start_line, start_col);
         buf[i] = '\0';
         return make_token(TOKEN_ERROR, buf, start_line, start_col);
     }
@@ -376,7 +372,7 @@ static Token scan_operator(Lexer *lexer)
     }
 
     char val[2] = {c, '\0'};
-    report_error("Unrecognized operator", start_line, start_col);
+    report_error(lexer, "Unrecognized operator", start_line, start_col);
     return make_token(TOKEN_ERROR, val, start_line, start_col);
 }
 
@@ -404,7 +400,7 @@ static Token scan_delimiter(Lexer *lexer)
     default:  break;
     }
 
-    report_error("Unrecognized delimiter", start_line, start_col);
+    report_error(lexer, "Unrecognized delimiter", start_line, start_col);
     return make_token(TOKEN_ERROR, val, start_line, start_col);
 }
 
@@ -413,17 +409,18 @@ static Token scan_delimiter(Lexer *lexer)
 /* ------------------------------------------------------------------ */
 
 /* Initializes the lexer state for the given null-terminated source string. */
-void lexer_init(Lexer *lexer, const char *source)
+void lexer_init(Lexer *lexer, const char *source, ErrorList *errors)
 {
-    lexer->source       = source;
-    lexer->position     = 0;
-    lexer->length       = (int)strlen(source);
-    lexer->line         = 1;
-    lexer->column       = 1;
+    lexer->source          = source;
+    lexer->position        = 0;
+    lexer->length          = (int)strlen(source);
+    lexer->line            = 1;
+    lexer->column          = 1;
     lexer->pending_dedents = 0;
     lexer->at_line_start   = 1;
     lexer->buffer_length   = 0;
     lexer->buffer[0]       = '\0';
+    lexer->errors          = errors;
 
     indent_stack_init(&lexer->indent_stack);
     indent_stack_push(&lexer->indent_stack, 0); /* base indentation level */
@@ -468,7 +465,7 @@ Token lexer_next_token(Lexer *lexer)
     {
         int tok_line = lexer->line;
         int tok_col  = lexer->column;
-        report_error("Tab character not allowed", tok_line, tok_col);
+        report_error(lexer, "Tab character not allowed", tok_line, tok_col);
         advance(lexer);
         return make_token(TOKEN_ERROR, "\t", tok_line, tok_col);
     }
@@ -483,9 +480,10 @@ Token lexer_next_token(Lexer *lexer)
         if (ind.type != TOKEN_COUNT)
             return ind;
 
-        /* Blank/comment line: consume the newline and stay in loop */
+        /* Blank/comment line: consume comment (if any) so recursion terminates */
         if (current_char(lexer) == '#' || current_char(lexer) == '\n' || at_end(lexer))
         {
+            skip_whitespace_and_comments(lexer); /* consume '#...' up to '\n' */
             lexer->at_line_start = 1;
             return lexer_next_token(lexer);
         }
@@ -525,7 +523,7 @@ Token lexer_next_token(Lexer *lexer)
     int tok_line = lexer->line;
     int tok_col  = lexer->column;
     char val[2]  = {c, '\0'};
-    report_error("Unrecognized character", tok_line, tok_col);
+    report_error(lexer, "Unrecognized character", tok_line, tok_col);
     advance(lexer);
     return make_token(TOKEN_ERROR, val, tok_line, tok_col);
 }
