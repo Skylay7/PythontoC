@@ -36,6 +36,7 @@ int main(int argc, char *argv[])
         return 1; /* Exit on file read error */
     }
 
+    /* Compile the source code */
     int compile_status = compile(source, output_file);
 
     free(source);

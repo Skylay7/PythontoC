@@ -4,10 +4,10 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* TODO: replace with real error handler module once implemented */
+/* TODO: thread the shared ErrorList pointer through the lexer so
+   lexer errors land in the same list as parser/semantic errors. */
 static void report_error(const char *message, int line, int column)
 {
-    /* Placeholder — will call errors_add() from errors.c later */
     (void)message;
     (void)line;
     (void)column;
