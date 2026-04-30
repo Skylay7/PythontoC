@@ -409,16 +409,16 @@ static Token scan_next_token_dfa(Lexer *lexer)
 
 void lexer_init(Lexer *lexer, const char *source, ErrorList *errors)
 {
-    lexer->source          = source;
-    lexer->position        = 0;
-    lexer->length          = (int)strlen(source);
-    lexer->line            = 1;
-    lexer->column          = 1;
+    lexer->source = source;
+    lexer->position = 0;
+    lexer->length = (int)strlen(source);
+    lexer->line = 1;
+    lexer->column = 1;
     lexer->pending_dedents = 0;
-    lexer->at_line_start   = 1;
-    lexer->buffer_length   = 0;
-    lexer->buffer[0]       = '\0';
-    lexer->errors          = errors;
+    lexer->at_line_start = 1;
+    lexer->buffer_length = 0;
+    lexer->buffer[0] = '\0';
+    lexer->errors = errors;
 
     indent_stack_init(&lexer->indent_stack);
     indent_stack_push(&lexer->indent_stack, 0);
@@ -461,7 +461,7 @@ Token lexer_next_token(Lexer *lexer)
     {
         int tok_line = lexer->line;
         int tok_col = lexer->column;
-        report_error("Tab character not allowed", tok_line, tok_col);
+        report_error(lexer, "Tab character not allowed", tok_line, tok_col);
         advance(lexer);
         return make_token(TOKEN_ERROR, "\t", tok_line, tok_col);
     }
