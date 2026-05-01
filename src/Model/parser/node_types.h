@@ -41,6 +41,9 @@ typedef enum
     NODE_PARAM_LIST, /* formal parameters of a def                */
     NODE_ARG_LIST,   /* actual arguments of a call                */
 
+    /* --- Range (for-loop iterable) --- */
+    NODE_RANGE, /* range(expr) — single child is upper bound */
+
     NODE_COUNT /* total number of node types (keep last)    */
 } NodeType;
 
