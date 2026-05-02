@@ -4,6 +4,7 @@
 #include "../Model/errors/errors.h"
 #include "../Model/lexer/lexer.h"
 #include "../Model/parser/parser.h"
+#include "../Model/Symantic analayzer/symantic_analyzer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,36 +59,72 @@ static const char *node_type_name(NodeType type)
 {
     switch (type)
     {
-    case NODE_PROGRAM:        return "PROGRAM";
-    case NODE_ASSIGN:         return "ASSIGN";
-    case NODE_ASSIGN_PLUS:    return "ASSIGN_PLUS";
-    case NODE_ASSIGN_MINUS:   return "ASSIGN_MINUS";
-    case NODE_IF:             return "IF";
-    case NODE_ELIF:           return "ELIF";
-    case NODE_ELSE:           return "ELSE";
-    case NODE_WHILE:          return "WHILE";
-    case NODE_FOR:            return "FOR";
-    case NODE_DEF:            return "DEF";
-    case NODE_RETURN:         return "RETURN";
-    case NODE_BREAK:          return "BREAK";
-    case NODE_CONTINUE:       return "CONTINUE";
-    case NODE_PASS:           return "PASS";
-    case NODE_PRINT:          return "PRINT";
-    case NODE_BLOCK:          return "BLOCK";
-    case NODE_BINARY_OP:      return "BINARY_OP";
-    case NODE_UNARY_OP:       return "UNARY_OP";
-    case NODE_CALL:           return "CALL";
-    case NODE_SUBSCRIPT:      return "SUBSCRIPT";
-    case NODE_IDENTIFIER:     return "IDENTIFIER";
-    case NODE_INT_LITERAL:    return "INT_LITERAL";
-    case NODE_FLOAT_LITERAL:  return "FLOAT_LITERAL";
-    case NODE_STRING_LITERAL: return "STRING_LITERAL";
-    case NODE_BOOL_LITERAL:   return "BOOL_LITERAL";
-    case NODE_NONE_LITERAL:   return "NONE_LITERAL";
-    case NODE_PARAM_LIST:     return "PARAM_LIST";
-    case NODE_ARG_LIST:       return "ARG_LIST";
-    case NODE_RANGE:          return "RANGE";
-    default:                  return "UNKNOWN";
+    case NODE_PROGRAM:
+        return "PROGRAM";
+    case NODE_ASSIGN:
+        return "ASSIGN";
+    case NODE_ASSIGN_PLUS:
+        return "ASSIGN_PLUS";
+    case NODE_ASSIGN_MINUS:
+        return "ASSIGN_MINUS";
+    case NODE_ASSIGN_MULT:
+        return "ASSIGN_MULT";
+    case NODE_ASSIGN_DIV:
+        return "ASSIGN_DIV";
+    case NODE_IF:
+        return "IF";
+    case NODE_ELIF:
+        return "ELIF";
+    case NODE_ELSE:
+        return "ELSE";
+    case NODE_WHILE:
+        return "WHILE";
+    case NODE_FOR:
+        return "FOR";
+    case NODE_DEF:
+        return "DEF";
+    case NODE_RETURN:
+        return "RETURN";
+    case NODE_BREAK:
+        return "BREAK";
+    case NODE_CONTINUE:
+        return "CONTINUE";
+    case NODE_PASS:
+        return "PASS";
+    case NODE_PRINT:
+        return "PRINT";
+    case NODE_BLOCK:
+        return "BLOCK";
+    case NODE_BINARY_OP:
+        return "BINARY_OP";
+    case NODE_UNARY_OP:
+        return "UNARY_OP";
+    case NODE_CALL:
+        return "CALL";
+    case NODE_SUBSCRIPT:
+        return "SUBSCRIPT";
+    case NODE_IDENTIFIER:
+        return "IDENTIFIER";
+    case NODE_INT_LITERAL:
+        return "INT_LITERAL";
+    case NODE_FLOAT_LITERAL:
+        return "FLOAT_LITERAL";
+    case NODE_STRING_LITERAL:
+        return "STRING_LITERAL";
+    case NODE_BOOL_LITERAL:
+        return "BOOL_LITERAL";
+    case NODE_NONE_LITERAL:
+        return "NONE_LITERAL";
+    case NODE_PARAM_LIST:
+        return "PARAM_LIST";
+    case NODE_ARG_LIST:
+        return "ARG_LIST";
+    case NODE_FUNCTION_CALL:
+        return "FUNCTION_CALL";
+    case NODE_RANGE:
+        return "RANGE";
+    default:
+        return "UNKNOWN";
     }
 }
 
@@ -95,14 +132,14 @@ static const char *node_type_name(NodeType type)
    prefix  — the indentation string built up by parent calls
    is_last — whether this node is the last child of its parent        */
 static void print_ast_node(const ASTNode *node,
-                            const char *prefix, int is_last)
+                           const char *prefix, int is_last)
 {
     /* Branch symbols: last child gets └── , others get ├──  */
-    const char *branch  = is_last ? "\xc2\xb8\xc2\xb8\xc2\xb8 " : "\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80 ";
-    const char *padding = is_last ? "    "                        : "\xe2\x94\x82   ";
+    const char *branch = is_last ? "\xc2\xb8\xc2\xb8\xc2\xb8 " : "\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80 ";
+    const char *padding = is_last ? "    " : "\xe2\x94\x82   ";
 
     /* Use plain ASCII fallback for Windows CMD compatibility */
-    branch  = is_last ? "`-- " : "|-- ";
+    branch = is_last ? "`-- " : "|-- ";
     padding = is_last ? "    " : "|   ";
 
     /* Print this node */
@@ -114,7 +151,7 @@ static void print_ast_node(const ASTNode *node,
     /* Build the prefix for children */
     char new_prefix[512];
     int prefix_len = (int)strlen(prefix);
-    int pad_len    = (int)strlen(padding);
+    int pad_len = (int)strlen(padding);
     if (prefix_len + pad_len < (int)sizeof(new_prefix) - 1)
     {
         memcpy(new_prefix, prefix, (size_t)prefix_len);
@@ -164,14 +201,9 @@ static ASTNode *run_parser(const TokenList *token_list, ErrorList *errors)
     return parse_program(&parser);
 }
 
-/* TODO: Replace with real semantic analyzer once implemented.
-   Receives the AST and the shared error list.
-   Returns a typed AST (currently NULL). */
-static void *run_semantic_analyzer(void *ast, ErrorList *errors)
+static ASTNode *run_semantic_analyzer(ASTNode *ast, ErrorList *errors)
 {
-    (void)ast;
-    (void)errors;
-    return NULL;
+    return semantic_analyze(ast, errors);
 }
 
 /* TODO: Replace with real code generator once implemented.
@@ -244,7 +276,12 @@ int compile(const char *source, const char *output_file)
 
     /* --- Stage 3: Semantic analysis ---
        Receives the AST and a fresh symbol table; returns a typed AST. */
-    void *typed_ast = run_semantic_analyzer(ast, &errors);
+    ASTNode *typed_ast = run_semantic_analyzer(ast, &errors);
+
+    /* --- Debug: print the AST --- */
+    printf("\n--- AST ---\n");
+    print_ast(typed_ast);
+    printf("-----------\n\n");
 
     /* --- Stage 4: Code generation ---
        Receives the typed AST, returns heap-allocated C source text. */

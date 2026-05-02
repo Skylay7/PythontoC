@@ -10,6 +10,8 @@ typedef enum
     NODE_ASSIGN,       /* x = expr                                   */
     NODE_ASSIGN_PLUS,  /* x += expr                                  */
     NODE_ASSIGN_MINUS, /* x -= expr                                  */
+    NODE_ASSIGN_MULT,  /* x *= expr                                  */
+    NODE_ASSIGN_DIV,   /* x /= expr                                  */
     NODE_IF,           /* if / elif / else chain                     */
     NODE_ELIF,         /* elif branch (child of NODE_IF)             */
     NODE_ELSE,         /* else branch (child of NODE_IF / NODE_ELIF) */
@@ -40,6 +42,9 @@ typedef enum
     /* --- Parameter / argument lists --- */
     NODE_PARAM_LIST, /* formal parameters of a def                */
     NODE_ARG_LIST,   /* actual arguments of a call                */
+
+    /* --- Function call --- */
+    NODE_FUNCTION_CALL, /* name(args…) — value = name, children = args */
 
     /* --- Range (for-loop iterable) --- */
     NODE_RANGE, /* range(expr) — single child is upper bound */

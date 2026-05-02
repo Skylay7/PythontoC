@@ -14,7 +14,7 @@
 #define AST_DS_H
 
 #include "node_types.h"
-#include "semantic_types.h"
+#include "../Symantic analayzer/semantic_types.h"
 
 /* ------------------------------------------------------------------ */
 /* ASTNode                                                             */

@@ -58,6 +58,14 @@ static const Token *expect(Parser *parser, TokenType type, const char *message)
     return NULL;
 }
 
+/* Returns the type of the token one ahead of current (without consuming). */
+static TokenType peek_next_type(const Parser *parser)
+{
+    if (parser->position + 1 >= parser->count)
+        return TOKEN_EOF;
+    return parser->tokens[parser->position + 1].type;
+}
+
 /* ------------------------------------------------------------------ */
 /* Forward declarations                                                 */
 /* ------------------------------------------------------------------ */
@@ -65,6 +73,38 @@ static const Token *expect(Parser *parser, TokenType type, const char *message)
 static ASTNode *parse_statement(Parser *parser);
 static ASTNode *parse_expression(Parser *parser);
 static ASTNode *parse_block(Parser *parser);
+static ASTNode *parse_function_call(Parser *parser);
+
+/* ------------------------------------------------------------------ */
+/* Function call parser                                                 */
+/* ------------------------------------------------------------------ */
+
+/* name(arg, arg, …) → NODE_FUNCTION_CALL  value=name  children=args  */
+static ASTNode *parse_function_call(Parser *parser)
+{
+    const Token *name_tok = advance(parser); /* consume identifier (name) */
+    ASTNode *node = ast_node_create(NODE_FUNCTION_CALL, name_tok->value,
+                                    name_tok->line, name_tok->column);
+
+    advance(parser); /* consume '(' */
+
+    if (!check(parser, TOKEN_RPAREN))
+    {
+        ASTNode *arg = parse_expression(parser);
+        if (arg)
+            ast_node_add_child(node, arg);
+
+        while (match(parser, TOKEN_COMMA))
+        {
+            arg = parse_expression(parser);
+            if (arg)
+                ast_node_add_child(node, arg);
+        }
+    }
+
+    expect(parser, TOKEN_RPAREN, "Expected ')' after function arguments");
+    return node;
+}
 
 /* ------------------------------------------------------------------ */
 /* Expression parser — shunting-yard algorithm                          */
@@ -210,10 +250,18 @@ static ASTNode *parse_expression(Parser *parser)
 
             if (node_type != NODE_COUNT)
             {
-                /* Simple operand: one table lookup replaces all if-else chains */
-                out_stack[++out_top] = ast_node_create(node_type, t->value,
-                                                       t->line, t->column);
-                advance(parser);
+                /* Identifier followed by '(' → function call */
+                if (type == TOKEN_IDENTIFIER &&
+                    peek_next_type(parser) == TOKEN_LPAREN)
+                {
+                    out_stack[++out_top] = parse_function_call(parser);
+                }
+                else
+                {
+                    out_stack[++out_top] = ast_node_create(node_type, t->value,
+                                                           t->line, t->column);
+                    advance(parser);
+                }
                 expect_operand = 0;
             }
             else if (type == TOKEN_LPAREN)
@@ -245,9 +293,9 @@ static ASTNode *parse_expression(Parser *parser)
             {
                 /* Lists, tuples, and dictionaries are out of scope */
                 error_list_add(parser->errors,
-                    "List/tuple/dictionary literals are not supported "
-                    "in this version of the compiler",
-                    t->line, t->column);
+                               "List/tuple/dictionary literals are not supported "
+                               "in this version of the compiler",
+                               t->line, t->column);
                 /* skip to the next newline to recover */
                 while (!at_end(parser) && current_type(parser) != TOKEN_NEWLINE)
                     advance(parser);
@@ -484,15 +532,15 @@ static ASTNode *parse_for_iterable(Parser *parser)
 /* FOR identifier IN range(EXPR) : block */
 static ASTNode *parse_for(Parser *parser)
 {
-    const Token *t    = advance(parser); /* consume FOR */
-    ASTNode     *node = ast_node_create(NODE_FOR, "", t->line, t->column);
+    const Token *t = advance(parser); /* consume FOR */
+    ASTNode *node = ast_node_create(NODE_FOR, "", t->line, t->column);
 
     /* child[0]: loop variable */
     const Token *var = expect(parser, TOKEN_IDENTIFIER,
                               "Expected variable name after 'for'");
     if (var)
         ast_node_add_child(node,
-            ast_node_create(NODE_IDENTIFIER, var->value, var->line, var->column));
+                           ast_node_create(NODE_IDENTIFIER, var->value, var->line, var->column));
 
     expect(parser, TOKEN_IN, "Expected 'in' after loop variable");
 
@@ -501,8 +549,8 @@ static ASTNode *parse_for(Parser *parser)
     if (iter)
         ast_node_add_child(node, iter);
 
-    expect(parser, TOKEN_COLON,  "Expected ':' after for iterable");
-    match(parser,  TOKEN_NEWLINE);
+    expect(parser, TOKEN_COLON, "Expected ':' after for iterable");
+    match(parser, TOKEN_NEWLINE);
 
     /* child[2]: body block */
     ASTNode *body = parse_block(parser);
@@ -644,6 +692,16 @@ static ASTNode *parse_assign(Parser *parser)
     {
         advance(parser);
         ntype = NODE_ASSIGN_MINUS;
+    }
+    else if (check(parser, TOKEN_STAR_ASSIGN))
+    {
+        advance(parser);
+        ntype = NODE_ASSIGN_MULT;
+    }
+    else if (check(parser, TOKEN_SLASH_ASSIGN))
+    {
+        advance(parser);
+        ntype = NODE_ASSIGN_DIV;
     }
     else
     {
