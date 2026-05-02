@@ -3,6 +3,10 @@
 #include "parser.h"
 #include <string.h>
 
+/* Thin wrapper so all call sites get STAGE_PARSER automatically. */
+#define error_list_add(list, msg, line, col) \
+    error_list_add_staged((list), (msg), (line), (col), STAGE_PARSER)
+
 /* ------------------------------------------------------------------ */
 /* Statement dispatch table — flat array, indexed directly by TokenType */
 /* ------------------------------------------------------------------ */

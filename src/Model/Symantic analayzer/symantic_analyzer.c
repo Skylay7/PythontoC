@@ -11,6 +11,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define error_list_add(list, msg, line, col) \
+    error_list_add_staged((list), (msg), (line), (col), STAGE_SEMANTIC)
+
 /* ------------------------------------------------------------------ */
 /* Symbol table — open-address hash table, chained via parent pointer  */
 /* ------------------------------------------------------------------ */
@@ -46,9 +49,9 @@ static void symbol_table_set(SymbolTable *table,
 }
 
 /* Look up a name, walking outward through parent scopes.
-   Returns STYPE_UNKNOWN if not found anywhere. */
-static SemanticType symbol_table_lookup(const SymbolTable *table,
-                                        const char *name)
+   Returns 1 if found (type written to *out_type), 0 if not declared anywhere. */
+static int symbol_table_lookup(const SymbolTable *table,
+                               const char *name, SemanticType *out_type)
 {
     while (table)
     {
@@ -57,13 +60,16 @@ static SemanticType symbol_table_lookup(const SymbolTable *table,
         while (table->entries[index].occupied && probes < SYMBOL_TABLE_SIZE)
         {
             if (strcmp(table->entries[index].name, name) == 0)
-                return table->entries[index].type;
+            {
+                *out_type = table->entries[index].type;
+                return 1;
+            }
             index = (index + 1) & (SYMBOL_TABLE_SIZE - 1);
             probes++;
         }
         table = table->parent; /* climb to enclosing scope */
     }
-    return STYPE_UNKNOWN;
+    return 0;
 }
 
 static void symbol_table_init(SymbolTable *table, SymbolTable *parent)
@@ -81,6 +87,10 @@ static void symbol_table_init(SymbolTable *table, SymbolTable *parent)
 static SemanticType promote(SemanticType a, SemanticType b)
 {
     if (a == b)
+        return a;
+    if (a == STYPE_UNKNOWN)
+        return b;
+    if (b == STYPE_UNKNOWN)
         return a;
     if (a == STYPE_INT && b == STYPE_FLOAT)
         return STYPE_FLOAT;
@@ -135,12 +145,15 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
 
     /* Identifier: look up in symbol table chain */
     case NODE_IDENTIFIER:
-        result = symbol_table_lookup(sa->current, node->value);
-        if (result == STYPE_UNKNOWN)
+    {
+        SemanticType found_type = STYPE_UNKNOWN;
+        if (!symbol_table_lookup(sa->current, node->value, &found_type))
             error_list_add(sa->errors,
                            "Use of undeclared variable",
                            node->line, node->column);
+        result = found_type;
         break;
+    }
 
     /* Arithmetic / comparison binary operators */
     case NODE_BINARY_OP:
@@ -182,16 +195,15 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
 
     /* Function call: look up return type in symbol table */
     case NODE_FUNCTION_CALL:
-        result = symbol_table_lookup(sa->current, node->value);
-        if (result == STYPE_UNKNOWN)
-        {
-            /* Infer arguments for side-effect type checking */
-            for (int i = 0; i < node->children_count; i++)
-                infer_type(sa, node->children[i]);
-            /* Return type unknown until function is defined */
-            result = STYPE_UNKNOWN;
-        }
+    {
+        SemanticType fn_type = STYPE_UNKNOWN;
+        symbol_table_lookup(sa->current, node->value, &fn_type);
+        /* Always infer argument types for side-effect type checking */
+        for (int i = 0; i < node->children_count; i++)
+            infer_type(sa, node->children[i]);
+        result = fn_type;
         break;
+    }
 
     default:
         result = STYPE_UNKNOWN;

@@ -6,7 +6,7 @@
 
 static void report_error(Lexer *lexer, const char *message, int line, int column)
 {
-    error_list_add(lexer->errors, message, line, column);
+    error_list_add_staged(lexer->errors, message, line, column, STAGE_LEXER);
 }
 
 /* ------------------------------------------------------------------ */
