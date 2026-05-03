@@ -11,8 +11,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define error_list_add(list, msg, line, col) \
-    error_list_add_staged((list), (msg), (line), (col), STAGE_SEMANTIC)
 
 /* ------------------------------------------------------------------ */
 /* Symbol table — open-address hash table, chained via parent pointer  */
@@ -148,9 +146,9 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
     {
         SemanticType found_type = STYPE_UNKNOWN;
         if (!symbol_table_lookup(sa->current, node->value, &found_type))
-            error_list_add(sa->errors,
+            error_list_add_staged(sa->errors,
                            "Use of undeclared variable",
-                           node->line, node->column);
+                           node->line, node->column, STAGE_SEMANTIC);
         result = found_type;
         break;
     }
@@ -175,9 +173,9 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
         {
             result = promote(left, right);
             if (result == STYPE_ERROR)
-                error_list_add(sa->errors,
+                error_list_add_staged(sa->errors,
                                "Type mismatch in binary expression",
-                               node->line, node->column);
+                               node->line, node->column, STAGE_SEMANTIC);
         }
         break;
     }
@@ -266,9 +264,9 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         SemanticType vtype = infer_type(sa, value);
 
         if (vtype == STYPE_ERROR)
-            error_list_add(sa->errors,
+            error_list_add_staged(sa->errors,
                            "Type mismatch in assignment expression",
-                           node->line, node->column);
+                           node->line, node->column, STAGE_SEMANTIC);
 
         if (target && target->type == NODE_IDENTIFIER)
         {
@@ -290,9 +288,9 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         {
             SemanticType ctype = infer_type(sa, node->children[0]);
             if (!is_condition_type(ctype))
-                error_list_add(sa->errors,
+                error_list_add_staged(sa->errors,
                                "Non-logical type in condition expression",
-                               node->line, node->column);
+                               node->line, node->column, STAGE_SEMANTIC);
         }
 
         /* Remaining children are BLOCK / ELIF / ELSE nodes — open scope each */

@@ -3,10 +3,6 @@
 #include "parser.h"
 #include <string.h>
 
-/* Thin wrapper so all call sites get STAGE_PARSER automatically. */
-#define error_list_add(list, msg, line, col) \
-    error_list_add_staged((list), (msg), (line), (col), STAGE_PARSER)
-
 /* ------------------------------------------------------------------ */
 /* Statement dispatch table — flat array, indexed directly by TokenType */
 /* ------------------------------------------------------------------ */
@@ -58,7 +54,7 @@ static const Token *expect(Parser *parser, TokenType type, const char *message)
     if (check(parser, type))
         return advance(parser);
     const Token *t = current_token(parser);
-    error_list_add(parser->errors, message, t->line, t->column);
+    error_list_add_staged(parser->errors, message, t->line, t->column, STAGE_PARSER);
     return NULL;
 }
 
@@ -169,8 +165,8 @@ static int apply_operator(OpEntry *ops, int *op_top,
     {
         if (*out_top < 0)
         {
-            error_list_add(errors, "Missing operand for unary operator",
-                           op.line, op.col);
+            error_list_add_staged(errors, "Missing operand for unary operator",
+                                  op.line, op.col, STAGE_PARSER);
             return -1;
         }
         ASTNode *operand = out[(*out_top)--];
@@ -185,8 +181,8 @@ static int apply_operator(OpEntry *ops, int *op_top,
     {
         if (*out_top < 1)
         {
-            error_list_add(errors, "Missing operand for binary operator",
-                           op.line, op.col);
+            error_list_add_staged(errors, "Missing operand for binary operator",
+                                  op.line, op.col, STAGE_PARSER);
             return -1;
         }
         ASTNode *right = out[(*out_top)--];
@@ -296,10 +292,10 @@ static ASTNode *parse_expression(Parser *parser)
             else if (type == TOKEN_LBRACKET || type == TOKEN_LBRACE)
             {
                 /* Lists, tuples, and dictionaries are out of scope */
-                error_list_add(parser->errors,
-                               "List/tuple/dictionary literals are not supported "
-                               "in this version of the compiler",
-                               t->line, t->column);
+                error_list_add_staged(parser->errors,
+                                      "List/tuple/dictionary literals are not supported "
+                                      "in this version of the compiler",
+                                      t->line, t->column, STAGE_PARSER);
                 /* skip to the next newline to recover */
                 while (!at_end(parser) && current_type(parser) != TOKEN_NEWLINE)
                     advance(parser);
@@ -369,7 +365,7 @@ static ASTNode *parse_expression(Parser *parser)
 expr_error:
 {
     const Token *t = current_token(parser);
-    error_list_add(parser->errors, "Expected expression", t->line, t->column);
+    error_list_add_staged(parser->errors, "Expected expression", t->line, t->column, STAGE_PARSER);
     return ast_node_create(NODE_INT_LITERAL, "0", t->line, t->column);
 }
 }
@@ -407,7 +403,7 @@ static ASTNode *parse_block(Parser *parser)
 
         if (ast_node_add_child(block, stmt) != 0)
         {
-            error_list_add(parser->errors, "Memory allocation failed", 0, 0);
+            error_list_add_staged(parser->errors, "Memory allocation failed", 0, 0, STAGE_PARSER);
             ast_node_free(stmt);
             break;
         }
@@ -508,9 +504,9 @@ static ASTNode *parse_for_iterable(Parser *parser)
     /* Must start with the identifier "range" */
     if (t->type != TOKEN_IDENTIFIER || strcmp(t->value, "range") != 0)
     {
-        error_list_add(parser->errors,
-                       "Expected 'range(...)' as for-loop iterable",
-                       t->line, t->column);
+        error_list_add_staged(parser->errors,
+                              "Expected 'range(...)' as for-loop iterable",
+                              t->line, t->column, STAGE_PARSER);
         /* recover: skip to colon */
         while (!at_end(parser) &&
                current_type(parser) != TOKEN_COLON &&
@@ -710,8 +706,8 @@ static ASTNode *parse_assign(Parser *parser)
     else
     {
         /* Not an assignment — bare identifier or call (unsupported here) */
-        error_list_add(parser->errors, "Expected assignment operator",
-                       id->line, id->column);
+        error_list_add_staged(parser->errors, "Expected assignment operator",
+                              id->line, id->column, STAGE_PARSER);
         match(parser, TOKEN_NEWLINE);
         return ast_node_create(NODE_IDENTIFIER, id->value, id->line, id->column);
     }
@@ -730,28 +726,56 @@ static ASTNode *parse_assign(Parser *parser)
 }
 
 /* ------------------------------------------------------------------ */
-/* Dispatch table initialisation                                        */
+/* Statement dispatch hash table                                        */
 /* ------------------------------------------------------------------ */
 
-static void dispatch_table_init(ParseFn *table)
+static void dispatch_register(DispatchTable *dt, TokenType key, ParseFn fn)
 {
-    for (int i = 0; i < TOKEN_COUNT; i++)
-        table[i] = NULL;
+    unsigned int idx = (unsigned int)key & (DISPATCH_TABLE_SIZE - 1);
+    int probes = 0;
+    while (dt->entries[idx].occupied && probes < DISPATCH_TABLE_SIZE)
+    {
+        idx = (idx + 1) & (DISPATCH_TABLE_SIZE - 1);
+        probes++;
+    }
+    dt->entries[idx].key = key;
+    dt->entries[idx].fn = fn;
+    dt->entries[idx].occupied = 1;
+}
 
-    table[TOKEN_IF] = parse_if;
-    table[TOKEN_WHILE] = parse_while;
-    table[TOKEN_FOR] = parse_for;
-    table[TOKEN_DEF] = parse_def;
-    table[TOKEN_RETURN] = parse_return;
-    table[TOKEN_PRINT] = parse_print;
-    table[TOKEN_BREAK] = parse_break;
-    table[TOKEN_CONTINUE] = parse_continue;
-    table[TOKEN_PASS] = parse_pass;
-    table[TOKEN_IDENTIFIER] = parse_assign;
+static ParseFn dispatch_lookup(const DispatchTable *dt, TokenType key)
+{
+    unsigned int idx = (unsigned int)key & (DISPATCH_TABLE_SIZE - 1);
+    int probes = 0;
+    while (dt->entries[idx].occupied && probes < DISPATCH_TABLE_SIZE)
+    {
+        if (dt->entries[idx].key == key)
+            return dt->entries[idx].fn;
+        idx = (idx + 1) & (DISPATCH_TABLE_SIZE - 1);
+        probes++;
+    }
+    return NULL;
+}
+
+static void dispatch_init(DispatchTable *dt)
+{
+    for (int i = 0; i < DISPATCH_TABLE_SIZE; i++)
+        dt->entries[i].occupied = 0;
+
+    dispatch_register(dt, TOKEN_IF, parse_if);
+    dispatch_register(dt, TOKEN_WHILE, parse_while);
+    dispatch_register(dt, TOKEN_FOR, parse_for);
+    dispatch_register(dt, TOKEN_DEF, parse_def);
+    dispatch_register(dt, TOKEN_RETURN, parse_return);
+    dispatch_register(dt, TOKEN_PRINT, parse_print);
+    dispatch_register(dt, TOKEN_BREAK, parse_break);
+    dispatch_register(dt, TOKEN_CONTINUE, parse_continue);
+    dispatch_register(dt, TOKEN_PASS, parse_pass);
+    dispatch_register(dt, TOKEN_IDENTIFIER, parse_assign);
 }
 
 /* ------------------------------------------------------------------ */
-/* Statement dispatcher — direct array lookup                          */
+/* Statement dispatcher                                                 */
 /* ------------------------------------------------------------------ */
 
 static ASTNode *parse_statement(Parser *parser)
@@ -762,13 +786,13 @@ static ASTNode *parse_statement(Parser *parser)
     if (at_end(parser))
         return NULL;
 
-    ParseFn fn = parser->stmt_dispatch[current_type(parser)];
+    ParseFn fn = dispatch_lookup(&parser->dispatch, current_type(parser));
     if (fn)
         return fn(parser);
 
-    /* No registered handler — wrap in error node and recover */
+    /* No handler — wrap in error node and recover */
     const Token *t = current_token(parser);
-    error_list_add(parser->errors, "Invalid syntax", t->line, t->column);
+    error_list_add_staged(parser->errors, "Invalid syntax", t->line, t->column, STAGE_PARSER);
     advance(parser);
     match(parser, TOKEN_NEWLINE);
     return ast_node_create(NODE_IDENTIFIER, "<error>", t->line, t->column);
@@ -786,8 +810,7 @@ void parser_init(Parser *parser,
     parser->position = 0;
     parser->count = count;
     parser->errors = errors;
-
-    dispatch_table_init(parser->stmt_dispatch);
+    dispatch_init(&parser->dispatch);
 }
 
 /* Parses the full token stream into a NODE_PROGRAM tree. */
@@ -804,7 +827,7 @@ ASTNode *parse_program(Parser *parser)
             break;
         if (ast_node_add_child(program, stmt) != 0)
         {
-            error_list_add(parser->errors, "Memory allocation failed in parser", 0, 0);
+            error_list_add_staged(parser->errors, "Memory allocation failed in parser", 0, 0, STAGE_PARSER);
             ast_node_free(stmt);
             break;
         }

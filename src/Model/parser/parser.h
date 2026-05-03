@@ -20,12 +20,26 @@
 #include "ast_ds.h"
 
 /* ------------------------------------------------------------------ */
-/* Statement dispatch table                                             */
-/* Flat array indexed by TokenType — NULL means no handler registered  */
+/* Statement dispatch hash table                                        */
+/* Maps TokenType → parse function via open-address hashing            */
 /* ------------------------------------------------------------------ */
+
+#define DISPATCH_TABLE_SIZE 32  /* power of 2, larger than # of statements */
 
 struct Parser;
 typedef struct ASTNode *(*ParseFn)(struct Parser *parser);
+
+typedef struct
+{
+    TokenType key;
+    ParseFn   fn;
+    int       occupied;
+} DispatchEntry;
+
+typedef struct
+{
+    DispatchEntry entries[DISPATCH_TABLE_SIZE];
+} DispatchTable;
 
 /* ------------------------------------------------------------------ */
 /* Parser state                                                         */
@@ -33,11 +47,11 @@ typedef struct ASTNode *(*ParseFn)(struct Parser *parser);
 
 typedef struct Parser
 {
-    const Token *tokens;                /* token array from the lexer        */
-    int position;                       /* index of the current token        */
-    int count;                          /* total number of tokens            */
-    ErrorList *errors;                  /* shared error list — never NULL    */
-    ParseFn stmt_dispatch[TOKEN_COUNT]; /* TokenType → parse_* function   */
+    const Token   *tokens;   /* token array from the lexer     */
+    int            position; /* index of the current token     */
+    int            count;    /* total number of tokens         */
+    ErrorList     *errors;   /* shared error list — never NULL */
+    DispatchTable  dispatch; /* keyword → parse function       */
 } Parser;
 
 /* ------------------------------------------------------------------ */

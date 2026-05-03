@@ -5,6 +5,7 @@
 #include "../Model/lexer/lexer.h"
 #include "../Model/parser/parser.h"
 #include "../Model/Symantic analayzer/symantic_analyzer.h"
+#include "../Model/code generator/code_generator.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -206,14 +207,9 @@ static ASTNode *run_semantic_analyzer(ASTNode *ast, ErrorList *errors)
     return semantic_analyze(ast, errors);
 }
 
-/* TODO: Replace with real code generator once implemented.
-   Receives the typed AST and the shared error list.
-   Returns a heap-allocated C code string (caller must free), or NULL. */
-static char *run_code_generator(void *typed_ast, ErrorList *errors)
+static char *run_code_generator(ASTNode *typed_ast, ErrorList *errors)
 {
-    (void)typed_ast;
-    (void)errors;
-    return NULL;
+    return generate_code(typed_ast, errors);
 }
 
 /* ------------------------------------------------------------------ */
