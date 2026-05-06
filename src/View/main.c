@@ -5,11 +5,9 @@
 #include <string.h>
 #include "../controller/compiler.h"
 
-/* Program version and name */
 #define PROGRAM_NAME "pytoc"
 #define PROGRAM_VERSION "0.1.0"
 
-/* --- Static Prototypes --- */
 static int commands_line_handle(int argc, char *argv[], const char **input_file, const char **output_file);
 static int file_initialization(const char *input_file, char **source);
 static void print_help(void);
@@ -20,25 +18,15 @@ int main(int argc, char *argv[])
     const char *input_file = NULL;
     const char *output_file = "output.c";
 
-    /* Pass addresses so the helper function can modify them */
     int cmd_status = commands_line_handle(argc, argv, &input_file, &output_file);
     if (cmd_status != 0)
-    {
-        /* Exit if help/version was printed or an error occurred */
         return (cmd_status == 1) ? 0 : 1;
-    }
 
     char *source = NULL;
-
-    /* Pass input_file correctly (without the *) */
     if (file_initialization(input_file, &source) != 0)
-    {
-        return 1; /* Exit on file read error */
-    }
-    
-    /* Compile the source code */
-    int compile_status = compile(source, output_file);
+        return 1;
 
+    int compile_status = compile(source, output_file);
     free(source);
 
     if (compile_status != 0)
@@ -49,7 +37,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-/* Returns 0 on success, 1 for clean exit (help/version), -1 for error */
+/* Returns 0 on success, 1 for clean exit (help/version printed), -1 on error. */
 static int commands_line_handle(int argc, char *argv[], const char **input_file, const char **output_file)
 {
     for (int i = 1; i < argc; i++)
@@ -72,7 +60,7 @@ static int commands_line_handle(int argc, char *argv[], const char **input_file,
                 fprintf(stderr, "Try '%s --help' for more information.\n", PROGRAM_NAME);
                 return -1;
             }
-            *output_file = argv[i + 1]; /* Dereference to modify the variable in main */
+            *output_file = argv[i + 1]; // dereference to write through the pointer passed from main
             i++;
         }
         else if (argv[i][0] == '-')
@@ -83,19 +71,19 @@ static int commands_line_handle(int argc, char *argv[], const char **input_file,
         }
         else
         {
-            if (*input_file != NULL) /* Check the actual pointer's value */
+            if (*input_file != NULL)
             {
                 fprintf(stderr, "Error: multiple input files specified\n");
                 fprintf(stderr, "Try '%s --help' for more information.\n", PROGRAM_NAME);
                 return -1;
             }
-            *input_file = argv[i]; /* Dereference to modify the variable in main */
+            *input_file = argv[i]; // dereference to write through the pointer passed from main
         }
     }
     return 0;
 }
 
-/* Returns 0 on success, -1 on error */
+/* Reads the entire file into a heap-allocated string. Returns 0 on success, -1 on error. */
 static int file_initialization(const char *input_file, char **source)
 {
     if (input_file == NULL)
