@@ -12,14 +12,15 @@ ASTNode *ast_node_create(NodeType type, const char *value, int line, int column)
     if (!node)
         return NULL;
 
-    node->type              = type;
-    node->inferred_type     = STYPE_UNKNOWN;
-    node->children          = NULL;
-    node->children_count    = 0;
+    node->type = type;
+    node->inferred_type = STYPE_UNKNOWN; // default until semantic analysis
+    node->children = NULL;
+    node->children_count = 0;
     node->children_capacity = 0;
-    node->line              = line;
-    node->column            = column;
+    node->line = line;
+    node->column = column;
 
+    // copy value if provided, else set to empty string
     if (value)
     {
         strncpy(node->value, value, AST_MAX_VALUE - 1);
@@ -37,6 +38,7 @@ int ast_node_add_child(ASTNode *parent, ASTNode *child)
 {
     if (parent->children_count >= parent->children_capacity)
     {
+        // Need to grow the children array times 2 or start with initial capacity
         int new_cap = parent->children_capacity == 0
                           ? CHILDREN_INITIAL_CAPACITY
                           : parent->children_capacity * 2;
@@ -46,7 +48,7 @@ int ast_node_add_child(ASTNode *parent, ASTNode *child)
         if (!new_children)
             return -1;
 
-        parent->children          = new_children;
+        parent->children = new_children;
         parent->children_capacity = new_cap;
     }
 

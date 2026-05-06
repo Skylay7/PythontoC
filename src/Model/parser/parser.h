@@ -14,14 +14,15 @@
 
 #define DISPATCH_TABLE_SIZE 32
 
+// Forward declaration for parse function pointer type.
 struct Parser;
 typedef struct ASTNode *(*ParseFn)(struct Parser *parser);
 
 typedef struct
 {
     TokenType key;
-    ParseFn   fn;
-    int       occupied; // flag to indicate if this slot is used
+    ParseFn fn;   // the parse function to call for this token type
+    int occupied; // flag to indicate if this slot is used
 } DispatchEntry;
 
 typedef struct
@@ -31,14 +32,14 @@ typedef struct
 
 typedef struct Parser
 {
-    const Token   *tokens;
-    int            position;
-    int            count;
-    ErrorList     *errors;
-    DispatchTable  dispatch;
+    const Token *tokens;
+    int position;
+    int count; // total number of tokens in the array
+    ErrorList *errors;
+    DispatchTable dispatch;
 } Parser;
 
-void     parser_init(Parser *parser, const Token *tokens, int count, ErrorList *errors);
+void parser_init(Parser *parser, const Token *tokens, int count, ErrorList *errors);
 ASTNode *parse_program(Parser *parser);
 
 #endif

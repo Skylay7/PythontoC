@@ -25,7 +25,7 @@ typedef enum
     NODE_PRINT,
     NODE_BLOCK,
 
-    NODE_BINARY_OP,  // value holds the operator string
+    NODE_BINARY_OP, // value holds the operator string
     NODE_UNARY_OP,
     NODE_CALL,
     NODE_SUBSCRIPT,

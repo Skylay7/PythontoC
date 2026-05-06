@@ -364,6 +364,9 @@ static ASTNode *parse_block(Parser *parser)
     if (!block)
         return NULL;
 
+    while (check(parser, TOKEN_NEWLINE)) // skip blank/comment lines before the opening INDENT
+        advance(parser);
+
     if (!expect(parser, TOKEN_INDENT, "Expected indented block"))
     {
         ast_node_free(block);
@@ -675,6 +678,14 @@ static ASTNode *parse_assign(Parser *parser)
         advance(parser);
         ntype = NODE_ASSIGN_DIV;
     }
+    else if (check(parser, TOKEN_LPAREN))
+    {
+        // bare function call as a statement — step back so parse_function_call can consume the name
+        parser->position--;
+        ASTNode *call = parse_function_call(parser);
+        match(parser, TOKEN_NEWLINE);
+        return call;
+    }
     else
     {
         // bare identifier with no assignment operator — not a valid statement here
@@ -776,10 +787,12 @@ void parser_init(Parser *parser, const Token *tokens, int count, ErrorList *erro
 // Parses the full token stream into a NODE_PROGRAM tree.
 ASTNode *parse_program(Parser *parser)
 {
+    // The root node of the AST is always a NODE_PROGRAM, which serves as the parent of all top-level statements.
     ASTNode *program = ast_node_create(NODE_PROGRAM, "", 1, 1);
     if (!program)
         return NULL;
 
+    // Parse statements until we reach the end of the token stream.
     while (!at_end(parser))
     {
         ASTNode *stmt = parse_statement(parser);

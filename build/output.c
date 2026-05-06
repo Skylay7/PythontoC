@@ -1,89 +1,18 @@
 #include <stdio.h>
 #include <math.h>
 
-int factorial(int n)
+int test_inference(int base_score, double multiplier, const char * username, int unused_param)
 {
-    int result = 1;
-    int i = 1;
-    while ((i <= n))
-    {
-        result *= i;
-        i += 1;
-    }
-    return result;
-}
-
-int is_even(int n)
-{
-    if ((n == 0))
-    {
-        return 1;
-    }
-    int r = (n - 2);
-    if ((r < 0))
-    {
-        return 0;
-    }
-    return is_even(r);
-}
-
-int sum_range(int limit)
-{
-    int total = 0;
-    for (int i = 0; i < limit; i++)
-    {
-        total += i;
-    }
-    return total;
+    int final_score = (base_score + 50);
+    double bonus = (multiplier * 1.25);
+    const char * greeting = (username + " logged in.");
+    printf("%d\n", final_score);
+    printf("%f\n", bonus);
+    printf("%s\n", greeting);
 }
 
 int main(void)
 {
-    int x = 5;
-    double y = 3.14;
-    const char *name = "Alice";
-    int flag = 1;
-    if ((x > 0))
-    {
-        printf("%d\n", x);
-    }
-    else if ((x == 0))
-    {
-        printf("%d\n", 0);
-    }
-    else
-    {
-        printf("%d\n", -(1));
-    }
-    int count = 0;
-    while ((count < x))
-    {
-        if ((count == 2))
-        {
-            count += 1;
-            continue;
-        }
-        printf("%d\n", count);
-        count += 1;
-    }
-    for (int i = 0; i < 10; i++)
-    {
-        if ((i == 7))
-        {
-            break;
-        }
-    }
-    int f = factorial(x);
-    printf("%d\n", f);
-    int s = sum_range(x);
-    printf("%d\n", s);
-    int a = 10;
-    int b = 4;
-    int c = (a + b);
-    int d = (a - b);
-    int e = !(flag);
-    printf("%d\n", c);
-    printf("%d\n", d);
-    printf("%d\n", e);
+    test_inference(100, 2.0, "admin", 0);
     return 0;
 }

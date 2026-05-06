@@ -30,7 +30,7 @@ static void symbol_table_set(SymbolTable *table, const char *name, SemanticType 
     }
     strncpy(table->entries[index].name, name, MAX_SYMBOL_NAME - 1);
     table->entries[index].name[MAX_SYMBOL_NAME - 1] = '\0';
-    table->entries[index].type     = type;
+    table->entries[index].type = type;
     table->entries[index].occupied = 1;
 }
 
@@ -66,11 +66,16 @@ static void symbol_table_init(SymbolTable *table, SymbolTable *parent)
 /* int+float → float. UNKNOWN on either side means we don't know yet, so trust the other side. */
 static SemanticType promote(SemanticType a, SemanticType b)
 {
-    if (a == b)                                return a;
-    if (a == STYPE_UNKNOWN)                    return b;
-    if (b == STYPE_UNKNOWN)                    return a;
-    if (a == STYPE_INT   && b == STYPE_FLOAT)  return STYPE_FLOAT;
-    if (a == STYPE_FLOAT && b == STYPE_INT)    return STYPE_FLOAT;
+    if (a == b)
+        return a;
+    if (a == STYPE_UNKNOWN)
+        return b;
+    if (b == STYPE_UNKNOWN)
+        return a;
+    if (a == STYPE_INT && b == STYPE_FLOAT)
+        return STYPE_FLOAT;
+    if (a == STYPE_FLOAT && b == STYPE_INT)
+        return STYPE_FLOAT;
     return STYPE_ERROR;
 }
 
@@ -79,8 +84,39 @@ static int is_condition_type(SemanticType t)
     return t == STYPE_BOOL || t == STYPE_INT || t == STYPE_FLOAT;
 }
 
+/* Walks the scope chain to find a variable and refines its type if we learn something
+   stronger from context. Only promotes forward (int→float, int→string); never downgrades.
+   First refinement wins — once a type is set to something other than STYPE_INT, it stays. */
+static void refine_identifier_type(SemanticAnalyzer *sa, const ASTNode *node, SemanticType new_type)
+{
+    if (!node || node->type != NODE_IDENTIFIER)
+        return;
+    if (new_type == STYPE_UNKNOWN || new_type == STYPE_ERROR || new_type == STYPE_INT)
+        return;
+
+    SymbolTable *table = sa->current;
+    while (table)
+    {
+        unsigned int index = symbol_hash(node->value) & (SYMBOL_TABLE_SIZE - 1);
+        int probes = 0;
+        while (table->entries[index].occupied && probes < SYMBOL_TABLE_SIZE)
+        {
+            if (strcmp(table->entries[index].name, node->value) == 0)
+            {
+                // only refine if still at the default (STYPE_INT); first evidence wins
+                if (table->entries[index].type == STYPE_INT)
+                    table->entries[index].type = new_type;
+                return;
+            }
+            index = (index + 1) & (SYMBOL_TABLE_SIZE - 1);
+            probes++;
+        }
+        table = table->parent;
+    }
+}
+
 static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node);
-static void         analyze_node(SemanticAnalyzer *sa, ASTNode *node);
+static void analyze_node(SemanticAnalyzer *sa, ASTNode *node);
 
 /* Bottom-up type inference for expression nodes.
    Walks the subtree, sets node->inferred_type on each node, and returns the type.
@@ -94,11 +130,21 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
 
     switch (node->type)
     {
-    case NODE_INT_LITERAL:    result = STYPE_INT;    break;
-    case NODE_FLOAT_LITERAL:  result = STYPE_FLOAT;  break;
-    case NODE_STRING_LITERAL: result = STYPE_STRING; break;
-    case NODE_BOOL_LITERAL:   result = STYPE_BOOL;   break;
-    case NODE_NONE_LITERAL:   result = STYPE_NONE;   break;
+    case NODE_INT_LITERAL:
+        result = STYPE_INT;
+        break;
+    case NODE_FLOAT_LITERAL:
+        result = STYPE_FLOAT;
+        break;
+    case NODE_STRING_LITERAL:
+        result = STYPE_STRING;
+        break;
+    case NODE_BOOL_LITERAL:
+        result = STYPE_BOOL;
+        break;
+    case NODE_NONE_LITERAL:
+        result = STYPE_NONE;
+        break;
 
     case NODE_IDENTIFIER:
     {
@@ -112,24 +158,61 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
 
     case NODE_BINARY_OP:
     {
-        SemanticType left  = infer_type(sa, node->children_count > 0 ? node->children[0] : NULL);
+        SemanticType left = infer_type(sa, node->children_count > 0 ? node->children[0] : NULL);
         SemanticType right = infer_type(sa, node->children_count > 1 ? node->children[1] : NULL);
 
         const char *op = node->value;
-        if (strcmp(op,"==")==0 || strcmp(op,"!=")==0 ||
-            strcmp(op,"<") ==0 || strcmp(op,">")==0  ||
-            strcmp(op,"<=")==0 || strcmp(op,">=")==0 ||
-            strcmp(op,"and")==0 || strcmp(op,"or")==0 ||
-            strcmp(op,"in")==0)
+        if (strcmp(op, "==") == 0 || strcmp(op, "!=") == 0 ||
+            strcmp(op, "<") == 0 || strcmp(op, ">") == 0 ||
+            strcmp(op, "<=") == 0 || strcmp(op, ">=") == 0 ||
+            strcmp(op, "and") == 0 || strcmp(op, "or") == 0 ||
+            strcmp(op, "in") == 0)
         {
             result = STYPE_BOOL;
         }
         else
         {
+            ASTNode *left_node = node->children_count > 0 ? node->children[0] : NULL;
+            ASTNode *right_node = node->children_count > 1 ? node->children[1] : NULL;
+
+            // string + identifier: refine the identifier to string before promote
+            if (strcmp(op, "+") == 0)
+            {
+                if (left == STYPE_STRING)
+                    refine_identifier_type(sa, right_node, STYPE_STRING);
+                if (right == STYPE_STRING)
+                    refine_identifier_type(sa, left_node, STYPE_STRING);
+            }
+
+            // read back updated types from the symbol table without re-running infer_type
+            // (re-running would emit duplicate "undeclared variable" errors)
+            if (left_node && left_node->type == NODE_IDENTIFIER)
+            {
+                SemanticType updated = left;
+                symbol_table_lookup(sa->current, left_node->value, &updated);
+                left = updated;
+            }
+            if (right_node && right_node->type == NODE_IDENTIFIER)
+            {
+                SemanticType updated = right;
+                symbol_table_lookup(sa->current, right_node->value, &updated);
+                right = updated;
+            }
+
             result = promote(left, right);
             if (result == STYPE_ERROR)
+            {
                 error_list_add_staged(sa->errors, "Type mismatch in binary expression",
                                       node->line, node->column, STAGE_SEMANTIC);
+            }
+            else
+            {
+                // if arithmetic promotion changed one side, refine that identifier too
+                if (result != left)
+                    refine_identifier_type(sa, left_node, result);
+                if (result != right)
+                    refine_identifier_type(sa, right_node, result);
+            }
         }
         break;
     }
@@ -202,7 +285,7 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
     case NODE_ASSIGN_DIV:
     {
         ASTNode *target = node->children_count > 0 ? node->children[0] : NULL;
-        ASTNode *value  = node->children_count > 1 ? node->children[1] : NULL;
+        ASTNode *value = node->children_count > 1 ? node->children[1] : NULL;
 
         SemanticType vtype = infer_type(sa, value);
 
@@ -280,21 +363,43 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         symbol_table_set(sa->current, node->value, STYPE_FUNCTION);
         push_scope(sa);
 
-        if (node->children_count > 0 &&
-            node->children[0]->type == NODE_PARAM_LIST)
+        ASTNode *params = (node->children_count > 0 &&
+                           node->children[0]->type == NODE_PARAM_LIST)
+                              ? node->children[0]
+                              : NULL;
+
+        // default all params to int — refine_identifier_type will update if body proves otherwise
+        if (params)
         {
-            ASTNode *params = node->children[0];
             for (int i = 0; i < params->children_count; i++)
             {
                 ASTNode *p = params->children[i];
-                // params have no type annotation, mark as unknown for now
                 if (p && p->type == NODE_IDENTIFIER)
-                    symbol_table_set(sa->current, p->value, STYPE_UNKNOWN);
+                {
+                    symbol_table_set(sa->current, p->value, STYPE_INT);
+                    p->inferred_type = STYPE_INT;
+                }
             }
         }
 
+        // body analysis will refine param types via the symbol table, so analyze it before reading back param types
         if (node->children_count > 1)
             analyze_node(sa, node->children[1]);
+
+        // read back refined types — body analysis may have updated the symbol table
+        if (params)
+        {
+            for (int i = 0; i < params->children_count; i++)
+            {
+                ASTNode *p = params->children[i];
+                if (p && p->type == NODE_IDENTIFIER)
+                {
+                    SemanticType refined = STYPE_INT;
+                    symbol_table_lookup(sa->current, p->value, &refined);
+                    p->inferred_type = refined;
+                }
+            }
+        }
 
         pop_scope(sa);
         return;
@@ -317,7 +422,7 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
     case NODE_CONTINUE:
     case NODE_PASS:
         return;
-
+    // other statement types (NODE_PROGRAM, NODE_ARG_LIST, NODE_FUNCTION_CALL etc.) don't need special handling here
     default:
         infer_type(sa, node);
         return;
@@ -335,7 +440,7 @@ ASTNode *semantic_analyze(ASTNode *root, ErrorList *errors)
         return NULL;
 
     SemanticAnalyzer sa;
-    sa.errors  = errors;
+    sa.errors = errors;
     symbol_table_init(&sa.global, NULL);
     sa.current = &sa.global;
 
