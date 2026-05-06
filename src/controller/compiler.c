@@ -10,10 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ------------------------------------------------------------------ */
-/* Token list                                                           */
-/* ------------------------------------------------------------------ */
-
+// Simple growable array that collects tokens from the lexer before passing them to the parser.
 typedef struct
 {
     Token *tokens;
@@ -52,10 +49,8 @@ static void token_list_free(TokenList *list)
     list->capacity = 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* AST printer                                                          */
-/* ------------------------------------------------------------------ */
-
+// Debug tree printer — prints the AST to stdout in a tree format for inspection.
+// node_type_name maps enum values to readable strings; print_ast_node recurses per child.
 static const char *node_type_name(NodeType type)
 {
     switch (type)
@@ -129,27 +124,18 @@ static const char *node_type_name(NodeType type)
     }
 }
 
-/* Recursive pre-order helper.
-   prefix  — the indentation string built up by parent calls
-   is_last — whether this node is the last child of its parent        */
-static void print_ast_node(const ASTNode *node,
-                           const char *prefix, int is_last)
+/* Recursive tree printer. prefix is the indentation built up from parent calls. */
+static void print_ast_node(const ASTNode *node, const char *prefix, int is_last)
 {
-    /* Branch symbols: last child gets └── , others get ├──  */
-    const char *branch = is_last ? "\xc2\xb8\xc2\xb8\xc2\xb8 " : "\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80 ";
-    const char *padding = is_last ? "    " : "\xe2\x94\x82   ";
+    // ASCII fallback — Unicode box-drawing breaks on Windows CMD
+    const char *branch = is_last ? "`-- " : "|-- ";
+    const char *padding = is_last ? "    " : "|   ";
 
-    /* Use plain ASCII fallback for Windows CMD compatibility */
-    branch = is_last ? "`-- " : "|-- ";
-    padding = is_last ? "    " : "|   ";
-
-    /* Print this node */
     printf("%s%s%s", prefix, branch, node_type_name(node->type));
     if (node->value[0] != '\0')
         printf(" '%s'", node->value);
     printf("  [line %d, col %d]\n", node->line, node->column);
 
-    /* Build the prefix for children */
     char new_prefix[512];
     int prefix_len = (int)strlen(prefix);
     int pad_len = (int)strlen(padding);
@@ -161,17 +147,15 @@ static void print_ast_node(const ASTNode *node,
     }
     else
     {
-        /* Prefix too deep — truncate gracefully */
+        // prefix got too long somehow, just truncate
         strncpy(new_prefix, prefix, sizeof(new_prefix) - 1);
         new_prefix[sizeof(new_prefix) - 1] = '\0';
     }
 
     for (int i = 0; i < node->children_count; i++)
-        print_ast_node(node->children[i], new_prefix,
-                       i == node->children_count - 1);
+        print_ast_node(node->children[i], new_prefix, i == node->children_count - 1);
 }
 
-/* Prints the full AST rooted at node to stdout. */
 static void print_ast(const ASTNode *node)
 {
     if (!node)
@@ -180,21 +164,16 @@ static void print_ast(const ASTNode *node)
         return;
     }
 
-    /* Print the root without a branch prefix */
     printf("%s", node_type_name(node->type));
     if (node->value[0] != '\0')
         printf(" '%s'", node->value);
     printf("  [line %d, col %d]\n", node->line, node->column);
 
     for (int i = 0; i < node->children_count; i++)
-        print_ast_node(node->children[i], "",
-                       i == node->children_count - 1);
+        print_ast_node(node->children[i], "", i == node->children_count - 1);
 }
 
-/* ------------------------------------------------------------------ */
-/* Pipeline stage stubs                                                 */
-/* ------------------------------------------------------------------ */
-
+// Thin wrappers that call into each pipeline stage with the right arguments.
 static ASTNode *run_parser(const TokenList *token_list, ErrorList *errors)
 {
     Parser parser;
@@ -212,10 +191,9 @@ static char *run_code_generator(ASTNode *typed_ast, ErrorList *errors)
     return generate_code(typed_ast, errors);
 }
 
-/* ------------------------------------------------------------------ */
-/* Public API                                                           */
-/* ------------------------------------------------------------------ */
-
+/* Runs the full compiler pipeline on source and writes C output to output_file.
+   Errors from all stages accumulate in one list and are written to errors.log at the end.
+   Returns 0 on success, -1 if any errors were recorded. */
 int compile(const char *source, const char *output_file)
 {
     if (!source)
@@ -224,21 +202,17 @@ int compile(const char *source, const char *output_file)
         return -1;
     }
 
-    /* Shared error list — passed through every stage */
     ErrorList errors;
     error_list_init(&errors);
 
-    /* --- Stage 1: Lexer ---
-       Runs the lexer over the source and collects all tokens into a list.
-       TOKEN_ERROR tokens are recorded in the error list but do not stop
-       the pipeline — the compiler continues to collect further errors. */
+    // stage 1: lexer
     Lexer lexer;
     lexer_init(&lexer, source, &errors);
 
     TokenList token_list;
     if (token_list_init(&token_list) != 0)
     {
-        error_list_add(&errors, "Memory allocation failed for token list", 0, 0);
+        error_list_add_staged(&errors, "Memory allocation failed for token list", 0, 0, STAGE_LEXER);
         error_list_write_log(&errors);
         return -1;
     }
@@ -249,45 +223,39 @@ int compile(const char *source, const char *output_file)
         tok = lexer_next_token(&lexer);
 
         if (tok.type == TOKEN_ERROR)
-            error_list_add(&errors, tok.value, tok.line, tok.column);
+            error_list_add_staged(&errors, tok.value, tok.line, tok.column, STAGE_LEXER);
 
         if (token_list_append(&token_list, tok) != 0)
         {
-            error_list_add(&errors, "Memory allocation failed during tokenization", 0, 0);
+            error_list_add_staged(&errors, "Memory allocation failed during tokenization", 0, 0, STAGE_LEXER);
             break;
         }
 
         printf("Token: type=%d, value='%s', line=%d, column=%d\n", tok.type, tok.value, tok.line, tok.column);
     } while (tok.type != TOKEN_EOF);
 
-    /* --- Stage 2: Parser ---
-       Receives the token list, returns an AST. */
+    // stage 2: parse
     ASTNode *ast = run_parser(&token_list, &errors);
     token_list_free(&token_list);
 
-    /* --- Debug: print the AST --- */
     printf("\n--- AST ---\n");
     print_ast(ast);
     printf("-----------\n\n");
 
-    /* --- Stage 3: Semantic analysis ---
-       Receives the AST and a fresh symbol table; returns a typed AST. */
+    // stage 3: semantic analysis
     ASTNode *typed_ast = run_semantic_analyzer(ast, &errors);
 
-    /* --- Debug: print the AST --- */
-    printf("\n--- AST ---\n");
+    printf("\n--- typed AST ---\n");
     print_ast(typed_ast);
     printf("-----------\n\n");
 
-    /* --- Stage 4: Code generation ---
-       Receives the typed AST, returns heap-allocated C source text. */
+    // stage 4: code generation
     char *c_code = run_code_generator(typed_ast, &errors);
 
-    /* --- Write C output file --- */
     FILE *out = fopen(output_file, "w");
     if (!out)
     {
-        error_list_add(&errors, "Cannot open output file for writing", 0, 0);
+        error_list_add_staged(&errors, "Cannot open output file for writing", 0, 0, STAGE_GENERAL);
     }
     else
     {
@@ -297,8 +265,6 @@ int compile(const char *source, const char *output_file)
     }
     free(c_code);
 
-    /* --- Write error log ---
-       Always writes errors.log: either the error list or a success message. */
     error_list_write_log(&errors);
 
     return errors.count > 0 ? -1 : 0;

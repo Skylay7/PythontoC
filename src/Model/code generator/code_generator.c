@@ -1,8 +1,8 @@
 /* code_generator.c
  *
- * Post-order DFS walk of the typed AST → C source text.
- * Expressions are generated inline (infix); statements write full lines.
- * Function definitions are collected first, then a main() body is emitted.
+ * Walks the typed AST and produces C source text. Function definitions
+ * go into a separate buffer so they appear before main() in the output.
+ * Expressions are written inline; statements write full lines with newlines.
  */
 
 #include "code_generator.h"
@@ -10,21 +10,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ------------------------------------------------------------------ */
-/* Dynamic output buffer                                                */
-/* ------------------------------------------------------------------ */
-
+// Dynamic output buffer — grows by doubling when full, similar to a StringBuilder.
 typedef struct
 {
     char *data;
-    int len;
-    int cap;
+    int   len;
+    int   cap;
 } CodeBuf;
 
 static int buf_init(CodeBuf *b)
 {
-    b->cap = 4096;
-    b->len = 0;
+    b->cap  = 4096;
+    b->len  = 0;
     b->data = malloc((size_t)b->cap);
     if (b->data)
         b->data[0] = '\0';
@@ -35,7 +32,7 @@ static void buf_free(CodeBuf *b)
 {
     free(b->data);
     b->data = NULL;
-    b->len = b->cap = 0;
+    b->len  = b->cap = 0;
 }
 
 static int buf_write(CodeBuf *b, const char *s)
@@ -43,34 +40,25 @@ static int buf_write(CodeBuf *b, const char *s)
     int slen = (int)strlen(s);
     if (b->len + slen + 1 > b->cap)
     {
-        int new_cap = b->cap * 2 + slen + 1;
+        int   new_cap  = b->cap * 2 + slen + 1;
         char *new_data = realloc(b->data, (size_t)new_cap);
         if (!new_data)
             return -1;
         b->data = new_data;
-        b->cap = new_cap;
+        b->cap  = new_cap;
     }
     memcpy(b->data + b->len, s, (size_t)slen);
-    b->len += slen;
+    b->len         += slen;
     b->data[b->len] = '\0';
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* Declared-variable tracker (per scope)                               */
-/* ------------------------------------------------------------------ */
-
+/* Tracks which variables have been declared in the current C scope.
+   First assignment → emit type + name. Subsequent ones → just name. */
 #define DECL_SIZE 128
 
-typedef struct
-{
-    char name[256];
-    int used;
-} DeclEntry;
-typedef struct
-{
-    DeclEntry entries[DECL_SIZE];
-} DeclTable;
+typedef struct { char name[256]; int used; } DeclEntry;
+typedef struct { DeclEntry entries[DECL_SIZE]; } DeclTable;
 
 static void decl_init(DeclTable *t)
 {
@@ -88,13 +76,13 @@ static unsigned int decl_hash(const char *s)
 
 static int decl_contains(const DeclTable *t, const char *name)
 {
-    unsigned int idx = decl_hash(name) & (DECL_SIZE - 1);
+    unsigned int index = decl_hash(name) & (DECL_SIZE - 1);
     int probes = 0;
-    while (t->entries[idx].used && probes < DECL_SIZE)
+    while (t->entries[index].used && probes < DECL_SIZE)
     {
-        if (strcmp(t->entries[idx].name, name) == 0)
+        if (strcmp(t->entries[index].name, name) == 0)
             return 1;
-        idx = (idx + 1) & (DECL_SIZE - 1);
+        index = (index + 1) & (DECL_SIZE - 1);
         probes++;
     }
     return 0;
@@ -102,38 +90,29 @@ static int decl_contains(const DeclTable *t, const char *name)
 
 static void decl_mark(DeclTable *t, const char *name)
 {
-    unsigned int idx = decl_hash(name) & (DECL_SIZE - 1);
+    unsigned int index = decl_hash(name) & (DECL_SIZE - 1);
     int probes = 0;
-    while (t->entries[idx].used &&
-           strcmp(t->entries[idx].name, name) != 0 &&
+    while (t->entries[index].used &&
+           strcmp(t->entries[index].name, name) != 0 &&
            probes < DECL_SIZE)
     {
-        idx = (idx + 1) & (DECL_SIZE - 1);
+        index = (index + 1) & (DECL_SIZE - 1);
         probes++;
     }
-    strncpy(t->entries[idx].name, name, 255);
-    t->entries[idx].name[255] = '\0';
-    t->entries[idx].used = 1;
+    strncpy(t->entries[index].name, name, 255);
+    t->entries[index].name[255] = '\0';
+    t->entries[index].used = 1;
 }
-
-/* ------------------------------------------------------------------ */
-/* Type helpers                                                         */
-/* ------------------------------------------------------------------ */
 
 static const char *stype_to_c(SemanticType t)
 {
     switch (t)
     {
-    case STYPE_FLOAT:
-        return "double";
-    case STYPE_STRING:
-        return "const char *";
-    case STYPE_BOOL:
-        return "int";
-    case STYPE_NONE:
-        return "void";
-    default:
-        return "int";
+    case STYPE_FLOAT:  return "double";
+    case STYPE_STRING: return "const char *";
+    case STYPE_BOOL:   return "int";
+    case STYPE_NONE:   return "void";
+    default:           return "int";
     }
 }
 
@@ -141,24 +120,17 @@ static const char *stype_to_fmt(SemanticType t)
 {
     switch (t)
     {
-    case STYPE_FLOAT:
-        return "%f";
-    case STYPE_STRING:
-        return "%s";
-    default:
-        return "%d";
+    case STYPE_FLOAT:  return "%f";
+    case STYPE_STRING: return "%s";
+    default:           return "%d";
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Code generator context                                               */
-/* ------------------------------------------------------------------ */
-
 typedef struct
 {
-    CodeBuf *buf;
+    CodeBuf   *buf;
     DeclTable *decl;
-    int indent;
+    int        indent;
     ErrorList *errors;
 } CG;
 
@@ -168,14 +140,11 @@ static void write_indent(CG *cg)
         buf_write(cg->buf, "    ");
 }
 
-/* Forward declarations — gen_expr and gen_stmt are mutually used. */
 static void gen_expr(CG *cg, const ASTNode *node);
 static void gen_stmt(CG *cg, const ASTNode *node);
 
-/* ------------------------------------------------------------------ */
-/* Expression generation — writes inline, no newline                   */
-/* ------------------------------------------------------------------ */
-
+/* Writes an expression inline to the buffer — no indentation, no newline.
+   Called recursively for sub-expressions (binary ops, function call args, etc.). */
 static void gen_expr(CG *cg, const ASTNode *node)
 {
     if (!node)
@@ -184,9 +153,6 @@ static void gen_expr(CG *cg, const ASTNode *node)
     switch (node->type)
     {
     case NODE_INT_LITERAL:
-        buf_write(cg->buf, node->value);
-        break;
-
     case NODE_FLOAT_LITERAL:
         buf_write(cg->buf, node->value);
         break;
@@ -221,17 +187,15 @@ static void gen_expr(CG *cg, const ASTNode *node)
 
     case NODE_BINARY_OP:
     {
-        const char *op = node->value;
+        const char *op   = node->value;
         const char *c_op = op;
-        if (strcmp(op, "and") == 0)
-            c_op = "&&";
-        else if (strcmp(op, "or") == 0)
-            c_op = "||";
-        else if (strcmp(op, "//") == 0)
-            c_op = "/";
+        if      (strcmp(op, "and") == 0) c_op = "&&";
+        else if (strcmp(op, "or")  == 0) c_op = "||";
+        else if (strcmp(op, "//")  == 0) c_op = "/";
 
         if (strcmp(op, "**") == 0)
         {
+            // no ** in C, use pow()
             buf_write(cg->buf, "pow(");
             gen_expr(cg, node->children_count > 0 ? node->children[0] : NULL);
             buf_write(cg->buf, ", ");
@@ -266,7 +230,7 @@ static void gen_expr(CG *cg, const ASTNode *node)
     }
 
     case NODE_RANGE:
-        /* range(n) — emit just the upper bound; used directly by for-loop */
+        // range(n) only stores the upper bound — emit it directly
         gen_expr(cg, node->children_count > 0 ? node->children[0] : NULL);
         break;
 
@@ -277,10 +241,8 @@ static void gen_expr(CG *cg, const ASTNode *node)
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Statement generation — writes full lines including newline          */
-/* ------------------------------------------------------------------ */
-
+/* Writes a full statement to the buffer, including indentation and trailing newline.
+   Handles all statement node types; delegates expressions to gen_expr. */
 static void gen_stmt(CG *cg, const ASTNode *node)
 {
     if (!node)
@@ -288,17 +250,15 @@ static void gen_stmt(CG *cg, const ASTNode *node)
 
     switch (node->type)
     {
-    /* ---- block: recurse children ---- */
     case NODE_BLOCK:
         for (int i = 0; i < node->children_count; i++)
             gen_stmt(cg, node->children[i]);
         break;
 
-    /* ---- assignment ---- */
     case NODE_ASSIGN:
     {
         const ASTNode *target = node->children_count > 0 ? node->children[0] : NULL;
-        const ASTNode *value = node->children_count > 1 ? node->children[1] : NULL;
+        const ASTNode *value  = node->children_count > 1 ? node->children[1] : NULL;
         if (!target)
             break;
 
@@ -306,8 +266,7 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         if (!decl_contains(cg->decl, target->value))
         {
             SemanticType t = node->inferred_type != STYPE_UNKNOWN
-                                 ? node->inferred_type
-                                 : STYPE_INT;
+                             ? node->inferred_type : STYPE_INT;
             buf_write(cg->buf, stype_to_c(t));
             buf_write(cg->buf, " ");
             buf_write(cg->buf, target->value);
@@ -324,20 +283,19 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         break;
     }
 
-    /* ---- compound assignment ---- */
     case NODE_ASSIGN_PLUS:
     case NODE_ASSIGN_MINUS:
     case NODE_ASSIGN_MULT:
     case NODE_ASSIGN_DIV:
     {
         const ASTNode *target = node->children_count > 0 ? node->children[0] : NULL;
-        const ASTNode *value = node->children_count > 1 ? node->children[1] : NULL;
+        const ASTNode *value  = node->children_count > 1 ? node->children[1] : NULL;
         if (!target)
             break;
 
-        const char *op = node->type == NODE_ASSIGN_PLUS ? "+=" : node->type == NODE_ASSIGN_MINUS ? "-="
-                                                             : node->type == NODE_ASSIGN_MULT    ? "*="
-                                                                                                 : "/=";
+        const char *op = node->type == NODE_ASSIGN_PLUS  ? "+=" :
+                         node->type == NODE_ASSIGN_MINUS ? "-=" :
+                         node->type == NODE_ASSIGN_MULT  ? "*=" : "/=";
         write_indent(cg);
         buf_write(cg->buf, target->value);
         buf_write(cg->buf, " ");
@@ -348,7 +306,6 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         break;
     }
 
-    /* ---- if ---- */
     case NODE_IF:
     {
         write_indent(cg);
@@ -361,7 +318,7 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}");
-        /* elif / else children follow */
+        // elif/else nodes are extra children of if, emitted inline
         for (int i = 2; i < node->children_count; i++)
             gen_stmt(cg, node->children[i]);
         buf_write(cg->buf, "\n");
@@ -396,7 +353,6 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         break;
     }
 
-    /* ---- while ---- */
     case NODE_WHILE:
     {
         write_indent(cg);
@@ -412,32 +368,23 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         break;
     }
 
-    /* ---- for / range ---- */
     case NODE_FOR:
     {
-        /* child[0]=loop var  child[1]=NODE_RANGE  child[2]=block */
-        const ASTNode *var = node->children_count > 0 ? node->children[0] : NULL;
+        // child[0]=loop var, child[1]=NODE_RANGE, child[2]=body
+        const ASTNode *var   = node->children_count > 0 ? node->children[0] : NULL;
         const ASTNode *range = node->children_count > 1 ? node->children[1] : NULL;
-        const ASTNode *body = node->children_count > 2 ? node->children[2] : NULL;
+        const ASTNode *body  = node->children_count > 2 ? node->children[2] : NULL;
+        const char    *vname = var ? var->value : "_i";
 
         write_indent(cg);
         buf_write(cg->buf, "for (int ");
-        if (var)
-            buf_write(cg->buf, var->value);
-        else
-            buf_write(cg->buf, "_i");
+        buf_write(cg->buf, vname);
         buf_write(cg->buf, " = 0; ");
-        if (var)
-            buf_write(cg->buf, var->value);
-        else
-            buf_write(cg->buf, "_i");
+        buf_write(cg->buf, vname);
         buf_write(cg->buf, " < ");
         gen_expr(cg, range);
         buf_write(cg->buf, "; ");
-        if (var)
-            buf_write(cg->buf, var->value);
-        else
-            buf_write(cg->buf, "_i");
+        buf_write(cg->buf, vname);
         buf_write(cg->buf, "++) {\n");
         cg->indent++;
         gen_stmt(cg, body);
@@ -447,7 +394,6 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         break;
     }
 
-    /* ---- print → printf ---- */
     case NODE_PRINT:
     {
         write_indent(cg);
@@ -473,10 +419,10 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         break;
     }
 
-    /* ---- function definition ---- */
     case NODE_DEF:
     {
-        /* child[0]=NODE_PARAM_LIST  child[1]=NODE_BLOCK */
+        // child[0]=param list, child[1]=body block
+        // all functions default to int return type since Python has no annotations
         buf_write(cg->buf, "int ");
         buf_write(cg->buf, node->value);
         buf_write(cg->buf, "(");
@@ -497,10 +443,10 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         }
         buf_write(cg->buf, ")\n{\n");
 
-        /* new declaration scope for the function body */
-        DeclTable fn_decl;
-        decl_init(&fn_decl);
+        // push a fresh declaration scope for the function body
+        DeclTable  fn_decl;
         DeclTable *saved = cg->decl;
+        decl_init(&fn_decl);
         cg->decl = &fn_decl;
         cg->indent++;
         if (node->children_count > 1)
@@ -511,7 +457,6 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         break;
     }
 
-    /* ---- return ---- */
     case NODE_RETURN:
         write_indent(cg);
         buf_write(cg->buf, "return");
@@ -537,7 +482,6 @@ static void gen_stmt(CG *cg, const ASTNode *node)
         break;
 
     default:
-        /* standalone expression statement (e.g. bare function call) */
         write_indent(cg);
         gen_expr(cg, node);
         buf_write(cg->buf, ";\n");
@@ -545,20 +489,18 @@ static void gen_stmt(CG *cg, const ASTNode *node)
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Public API                                                           */
-/* ------------------------------------------------------------------ */
-
+/* Walks the typed AST and produces a complete C source file as a heap-allocated string.
+   Function definitions are written to a separate buffer so they appear before main().
+   Caller must free the returned string. Returns NULL on allocation failure. */
 char *generate_code(const ASTNode *root, ErrorList *errors)
 {
     if (!root)
         return NULL;
 
-    /* Separate buffers: function defs go before main() */
     CodeBuf fn_buf, main_buf;
     if (buf_init(&fn_buf) != 0 || buf_init(&main_buf) != 0)
     {
-        error_list_add(errors, "Memory allocation failed in code generator", 0, 0);
+        error_list_add_staged(errors, "Memory allocation failed in code generator", 0, 0, STAGE_CODEGEN);
         buf_free(&fn_buf);
         return NULL;
     }
@@ -566,8 +508,8 @@ char *generate_code(const ASTNode *root, ErrorList *errors)
     DeclTable main_decl;
     decl_init(&main_decl);
 
-    CG fn_cg = {&fn_buf, &main_decl, 0, errors};
-    CG main_cg = {&main_buf, &main_decl, 1, errors};
+    CG fn_cg   = { &fn_buf,   &main_decl, 0, errors };
+    CG main_cg = { &main_buf, &main_decl, 1, errors };
 
     if (root->type == NODE_PROGRAM)
     {
@@ -581,11 +523,10 @@ char *generate_code(const ASTNode *root, ErrorList *errors)
         }
     }
 
-    /* Assemble: header + forward decls + functions + main */
     CodeBuf out;
     if (buf_init(&out) != 0)
     {
-        error_list_add(errors, "Memory allocation failed in code generator", 0, 0);
+        error_list_add_staged(errors, "Memory allocation failed in code generator", 0, 0, STAGE_CODEGEN);
         buf_free(&fn_buf);
         buf_free(&main_buf);
         return NULL;
@@ -603,5 +544,5 @@ char *generate_code(const ASTNode *root, ErrorList *errors)
     buf_free(&fn_buf);
     buf_free(&main_buf);
 
-    return out.data; /* caller must free */
+    return out.data; // caller must free
 }

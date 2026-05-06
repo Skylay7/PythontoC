@@ -1,55 +1,49 @@
+/* node_types.h */
+
 #ifndef NODE_TYPES_H
 #define NODE_TYPES_H
 
 typedef enum
 {
-    /* --- Root --- */
-    NODE_PROGRAM, /* top-level sequence of statements           */
+    NODE_PROGRAM,
 
-    /* --- Statements --- */
-    NODE_ASSIGN,       /* x = expr                                   */
-    NODE_ASSIGN_PLUS,  /* x += expr                                  */
-    NODE_ASSIGN_MINUS, /* x -= expr                                  */
-    NODE_ASSIGN_MULT,  /* x *= expr                                  */
-    NODE_ASSIGN_DIV,   /* x /= expr                                  */
-    NODE_IF,           /* if / elif / else chain                     */
-    NODE_ELIF,         /* elif branch (child of NODE_IF)             */
-    NODE_ELSE,         /* else branch (child of NODE_IF / NODE_ELIF) */
-    NODE_WHILE,        /* while loop                                 */
-    NODE_FOR,          /* for loop                                   */
-    NODE_DEF,          /* function definition                        */
-    NODE_RETURN,       /* return statement                           */
-    NODE_BREAK,        /* break statement                            */
-    NODE_CONTINUE,     /* continue statement                         */
-    NODE_PASS,         /* pass statement                             */
-    NODE_PRINT,        /* print( ... )                               */
-    NODE_BLOCK,        /* indented block — ordered list of stmts     */
+    NODE_ASSIGN,
+    NODE_ASSIGN_PLUS,
+    NODE_ASSIGN_MINUS,
+    NODE_ASSIGN_MULT,
+    NODE_ASSIGN_DIV,
+    NODE_IF,
+    NODE_ELIF,
+    NODE_ELSE,
+    NODE_WHILE,
+    NODE_FOR,
+    NODE_DEF,
+    NODE_RETURN,
+    NODE_BREAK,
+    NODE_CONTINUE,
+    NODE_PASS,
+    NODE_PRINT,
+    NODE_BLOCK,
 
-    /* --- Expressions --- */
-    NODE_BINARY_OP, /* left <op> right  (value holds operator)    */
-    NODE_UNARY_OP,  /* <op> operand     (value holds operator)    */
-    NODE_CALL,      /* func(args...)                              */
-    NODE_SUBSCRIPT, /* obj[index]                                 */
+    NODE_BINARY_OP,  // value holds the operator string
+    NODE_UNARY_OP,
+    NODE_CALL,
+    NODE_SUBSCRIPT,
 
-    /* --- Leaves (terminals) --- */
-    NODE_IDENTIFIER,     /* variable / function name  (value = name)  */
-    NODE_INT_LITERAL,    /* integer constant          (value = text)  */
-    NODE_FLOAT_LITERAL,  /* float constant            (value = text)  */
-    NODE_STRING_LITERAL, /* string constant           (value = text)  */
-    NODE_BOOL_LITERAL,   /* True / False              (value = text)  */
-    NODE_NONE_LITERAL,   /* None                                       */
+    NODE_IDENTIFIER,
+    NODE_INT_LITERAL,
+    NODE_FLOAT_LITERAL,
+    NODE_STRING_LITERAL,
+    NODE_BOOL_LITERAL,
+    NODE_NONE_LITERAL,
 
-    /* --- Parameter / argument lists --- */
-    NODE_PARAM_LIST, /* formal parameters of a def                */
-    NODE_ARG_LIST,   /* actual arguments of a call                */
+    NODE_PARAM_LIST,
+    NODE_ARG_LIST,
+    NODE_FUNCTION_CALL, // value = function name, children = args
 
-    /* --- Function call --- */
-    NODE_FUNCTION_CALL, /* name(args…) — value = name, children = args */
+    NODE_RANGE, // only child is the upper bound expression
 
-    /* --- Range (for-loop iterable) --- */
-    NODE_RANGE, /* range(expr) — single child is upper bound */
-
-    NODE_COUNT /* total number of node types (keep last)    */
+    NODE_COUNT
 } NodeType;
 
 #endif

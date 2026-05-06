@@ -1,21 +1,11 @@
-/* symantic_analyzer.c
- *
- * Implements:
- *   - Scope resolution  : linked chain of hash-table symbol tables,
- *                         one per block / function.
- *   - Type inference    : bottom-up, constraint-based.  Every node
- *                         receives an inferred_type from SemanticType.
- */
+/* symantic_analyzer.c */
 
 #include "symantic_analyzer.h"
 #include <string.h>
 #include <stdlib.h>
 
-
-/* ------------------------------------------------------------------ */
-/* Symbol table — open-address hash table, chained via parent pointer  */
-/* ------------------------------------------------------------------ */
-
+// Symbol table — open-address hash table with linear probing.
+// Each scope is a separate SymbolTable linked to its parent via the parent pointer.
 static unsigned int symbol_hash(const char *name)
 {
     unsigned int h = 0;
@@ -27,9 +17,7 @@ static unsigned int symbol_hash(const char *name)
     return h;
 }
 
-/* Insert or overwrite a name→type binding in the given scope. */
-static void symbol_table_set(SymbolTable *table,
-                             const char *name, SemanticType type)
+static void symbol_table_set(SymbolTable *table, const char *name, SemanticType type)
 {
     unsigned int index = symbol_hash(name) & (SYMBOL_TABLE_SIZE - 1);
     int probes = 0;
@@ -42,14 +30,12 @@ static void symbol_table_set(SymbolTable *table,
     }
     strncpy(table->entries[index].name, name, MAX_SYMBOL_NAME - 1);
     table->entries[index].name[MAX_SYMBOL_NAME - 1] = '\0';
-    table->entries[index].type = type;
+    table->entries[index].type     = type;
     table->entries[index].occupied = 1;
 }
 
-/* Look up a name, walking outward through parent scopes.
-   Returns 1 if found (type written to *out_type), 0 if not declared anywhere. */
-static int symbol_table_lookup(const SymbolTable *table,
-                               const char *name, SemanticType *out_type)
+/* Walks up the scope chain. Returns 1 if found (type written to *out_type), 0 if not declared. */
+static int symbol_table_lookup(const SymbolTable *table, const char *name, SemanticType *out_type)
 {
     while (table)
     {
@@ -65,7 +51,7 @@ static int symbol_table_lookup(const SymbolTable *table,
             index = (index + 1) & (SYMBOL_TABLE_SIZE - 1);
             probes++;
         }
-        table = table->parent; /* climb to enclosing scope */
+        table = table->parent;
     }
     return 0;
 }
@@ -77,40 +63,28 @@ static void symbol_table_init(SymbolTable *table, SymbolTable *parent)
     table->parent = parent;
 }
 
-/* ------------------------------------------------------------------ */
-/* Type inference helpers                                               */
-/* ------------------------------------------------------------------ */
-
-/* Promotion rule: int op float → float, anything else → error. */
+/* int+float → float. UNKNOWN on either side means we don't know yet, so trust the other side. */
 static SemanticType promote(SemanticType a, SemanticType b)
 {
-    if (a == b)
-        return a;
-    if (a == STYPE_UNKNOWN)
-        return b;
-    if (b == STYPE_UNKNOWN)
-        return a;
-    if (a == STYPE_INT && b == STYPE_FLOAT)
-        return STYPE_FLOAT;
-    if (a == STYPE_FLOAT && b == STYPE_INT)
-        return STYPE_FLOAT;
+    if (a == b)                                return a;
+    if (a == STYPE_UNKNOWN)                    return b;
+    if (b == STYPE_UNKNOWN)                    return a;
+    if (a == STYPE_INT   && b == STYPE_FLOAT)  return STYPE_FLOAT;
+    if (a == STYPE_FLOAT && b == STYPE_INT)    return STYPE_FLOAT;
     return STYPE_ERROR;
 }
 
-/* Returns 1 if the type can appear in a condition (bool, int, float). */
 static int is_condition_type(SemanticType t)
 {
     return t == STYPE_BOOL || t == STYPE_INT || t == STYPE_FLOAT;
 }
 
-/* Forward declaration — infer_type and analyze_node are mutually recursive. */
 static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node);
-static void analyze_node(SemanticAnalyzer *sa, ASTNode *node);
+static void         analyze_node(SemanticAnalyzer *sa, ASTNode *node);
 
-/* ------------------------------------------------------------------ */
-/* Type inference — walks the expression subtree bottom-up             */
-/* ------------------------------------------------------------------ */
-
+/* Bottom-up type inference for expression nodes.
+   Walks the subtree, sets node->inferred_type on each node, and returns the type.
+   Comparison operators always yield STYPE_BOOL regardless of operand types. */
 static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
 {
     if (!node)
@@ -120,52 +94,33 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
 
     switch (node->type)
     {
-    /* Leaves: type comes directly from syntax */
-    case NODE_INT_LITERAL:
-        result = STYPE_INT;
-        break;
+    case NODE_INT_LITERAL:    result = STYPE_INT;    break;
+    case NODE_FLOAT_LITERAL:  result = STYPE_FLOAT;  break;
+    case NODE_STRING_LITERAL: result = STYPE_STRING; break;
+    case NODE_BOOL_LITERAL:   result = STYPE_BOOL;   break;
+    case NODE_NONE_LITERAL:   result = STYPE_NONE;   break;
 
-    case NODE_FLOAT_LITERAL:
-        result = STYPE_FLOAT;
-        break;
-
-    case NODE_STRING_LITERAL:
-        result = STYPE_STRING;
-        break;
-
-    case NODE_BOOL_LITERAL:
-        result = STYPE_BOOL;
-        break;
-
-    case NODE_NONE_LITERAL:
-        result = STYPE_NONE;
-        break;
-
-    /* Identifier: look up in symbol table chain */
     case NODE_IDENTIFIER:
     {
         SemanticType found_type = STYPE_UNKNOWN;
         if (!symbol_table_lookup(sa->current, node->value, &found_type))
-            error_list_add_staged(sa->errors,
-                           "Use of undeclared variable",
-                           node->line, node->column, STAGE_SEMANTIC);
+            error_list_add_staged(sa->errors, "Use of undeclared variable",
+                                  node->line, node->column, STAGE_SEMANTIC);
         result = found_type;
         break;
     }
 
-    /* Arithmetic / comparison binary operators */
     case NODE_BINARY_OP:
     {
-        SemanticType left = infer_type(sa, node->children_count > 0 ? node->children[0] : NULL);
+        SemanticType left  = infer_type(sa, node->children_count > 0 ? node->children[0] : NULL);
         SemanticType right = infer_type(sa, node->children_count > 1 ? node->children[1] : NULL);
 
-        /* Comparison operators always yield bool */
         const char *op = node->value;
-        if (strcmp(op, "==") == 0 || strcmp(op, "!=") == 0 ||
-            strcmp(op, "<") == 0 || strcmp(op, ">") == 0 ||
-            strcmp(op, "<=") == 0 || strcmp(op, ">=") == 0 ||
-            strcmp(op, "and") == 0 || strcmp(op, "or") == 0 ||
-            strcmp(op, "in") == 0)
+        if (strcmp(op,"==")==0 || strcmp(op,"!=")==0 ||
+            strcmp(op,"<") ==0 || strcmp(op,">")==0  ||
+            strcmp(op,"<=")==0 || strcmp(op,">=")==0 ||
+            strcmp(op,"and")==0 || strcmp(op,"or")==0 ||
+            strcmp(op,"in")==0)
         {
             result = STYPE_BOOL;
         }
@@ -173,30 +128,23 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
         {
             result = promote(left, right);
             if (result == STYPE_ERROR)
-                error_list_add_staged(sa->errors,
-                               "Type mismatch in binary expression",
-                               node->line, node->column, STAGE_SEMANTIC);
+                error_list_add_staged(sa->errors, "Type mismatch in binary expression",
+                                      node->line, node->column, STAGE_SEMANTIC);
         }
         break;
     }
 
-    /* Unary operators */
     case NODE_UNARY_OP:
     {
         SemanticType operand = infer_type(sa, node->children_count > 0 ? node->children[0] : NULL);
-        if (strcmp(node->value, "not") == 0)
-            result = STYPE_BOOL;
-        else
-            result = operand; /* unary minus keeps the operand type */
+        result = strcmp(node->value, "not") == 0 ? STYPE_BOOL : operand;
         break;
     }
 
-    /* Function call: look up return type in symbol table */
     case NODE_FUNCTION_CALL:
     {
         SemanticType fn_type = STYPE_UNKNOWN;
         symbol_table_lookup(sa->current, node->value, &fn_type);
-        /* Always infer argument types for side-effect type checking */
         for (int i = 0; i < node->children_count; i++)
             infer_type(sa, node->children[i]);
         result = fn_type;
@@ -212,22 +160,17 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
     return result;
 }
 
-/* ------------------------------------------------------------------ */
-/* Node analysis — handles statements; calls infer_type for exprs      */
-/* ------------------------------------------------------------------ */
-
-/* Push a new child scope onto the chain and return it (heap-allocated). */
+// Scope management — each block/function gets its own heap-allocated scope.
 static SymbolTable *push_scope(SemanticAnalyzer *sa)
 {
     SymbolTable *child = malloc(sizeof(SymbolTable));
     if (!child)
-        return sa->current; /* fallback: stay in current scope */
+        return sa->current;
     symbol_table_init(child, sa->current);
     sa->current = child;
     return child;
 }
 
-/* Pop back to parent scope and free the child. */
 static void pop_scope(SemanticAnalyzer *sa)
 {
     SymbolTable *child = sa->current;
@@ -238,6 +181,8 @@ static void pop_scope(SemanticAnalyzer *sa)
     }
 }
 
+/* Handles statement-level nodes — binds variables, opens/closes scopes, checks conditions.
+   Calls infer_type for expression subtrees rather than recursing into them directly. */
 static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
 {
     if (!node)
@@ -245,13 +190,11 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
 
     switch (node->type)
     {
-    /* 5.1 — skip error nodes */
     case NODE_IDENTIFIER:
         if (strcmp(node->value, "<error>") == 0)
             return;
         break;
 
-    /* 5.2 — assignment: infer RHS type, bind variable in current scope */
     case NODE_ASSIGN:
     case NODE_ASSIGN_PLUS:
     case NODE_ASSIGN_MINUS:
@@ -259,14 +202,13 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
     case NODE_ASSIGN_DIV:
     {
         ASTNode *target = node->children_count > 0 ? node->children[0] : NULL;
-        ASTNode *value = node->children_count > 1 ? node->children[1] : NULL;
+        ASTNode *value  = node->children_count > 1 ? node->children[1] : NULL;
 
         SemanticType vtype = infer_type(sa, value);
 
         if (vtype == STYPE_ERROR)
-            error_list_add_staged(sa->errors,
-                           "Type mismatch in assignment expression",
-                           node->line, node->column, STAGE_SEMANTIC);
+            error_list_add_staged(sa->errors, "Type mismatch in assignment expression",
+                                  node->line, node->column, STAGE_SEMANTIC);
 
         if (target && target->type == NODE_IDENTIFIER)
         {
@@ -278,22 +220,17 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         return;
     }
 
-    /* 5.3 — if / elif / while: check condition type, open new scope for body */
     case NODE_IF:
     case NODE_ELIF:
     case NODE_WHILE:
     {
-        /* child[0] = condition expression */
         if (node->children_count > 0)
         {
             SemanticType ctype = infer_type(sa, node->children[0]);
             if (!is_condition_type(ctype))
-                error_list_add_staged(sa->errors,
-                               "Non-logical type in condition expression",
-                               node->line, node->column, STAGE_SEMANTIC);
+                error_list_add_staged(sa->errors, "Non-logical type in condition expression",
+                                      node->line, node->column, STAGE_SEMANTIC);
         }
-
-        /* Remaining children are BLOCK / ELIF / ELSE nodes — open scope each */
         for (int i = 1; i < node->children_count; i++)
         {
             push_scope(sa);
@@ -305,7 +242,6 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
 
     case NODE_ELSE:
     {
-        /* No condition — just a block */
         push_scope(sa);
         for (int i = 0; i < node->children_count; i++)
             analyze_node(sa, node->children[i]);
@@ -313,18 +249,16 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         return;
     }
 
-    /* FOR loop: loop variable is int (range index), open scope for body */
     case NODE_FOR:
     {
-        /* child[0] = loop variable, child[1] = NODE_RANGE, child[2] = BLOCK */
+        // loop variable is always int (range index)
         if (node->children_count > 0 && node->children[0])
         {
-            symbol_table_set(sa->current,
-                             node->children[0]->value, STYPE_INT);
+            symbol_table_set(sa->current, node->children[0]->value, STYPE_INT);
             node->children[0]->inferred_type = STYPE_INT;
         }
         if (node->children_count > 1)
-            infer_type(sa, node->children[1]); /* validate range expr */
+            infer_type(sa, node->children[1]);
 
         push_scope(sa);
         if (node->children_count > 2)
@@ -333,7 +267,6 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         return;
     }
 
-    /* 5.4 — print: infer argument types (used by code generator for format) */
     case NODE_PRINT:
         for (int i = 0; i < node->children_count; i++)
         {
@@ -342,15 +275,11 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         }
         return;
 
-    /* 5.5 — function definition: register name, open scope, add params */
     case NODE_DEF:
     {
-        /* Register the function name in the parent (current) scope */
         symbol_table_set(sa->current, node->value, STYPE_FUNCTION);
-
         push_scope(sa);
 
-        /* child[0] = NODE_PARAM_LIST, child[1] = NODE_BLOCK */
         if (node->children_count > 0 &&
             node->children[0]->type == NODE_PARAM_LIST)
         {
@@ -358,6 +287,7 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
             for (int i = 0; i < params->children_count; i++)
             {
                 ASTNode *p = params->children[i];
+                // params have no type annotation, mark as unknown for now
                 if (p && p->type == NODE_IDENTIFIER)
                     symbol_table_set(sa->current, p->value, STYPE_UNKNOWN);
             }
@@ -370,7 +300,6 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         return;
     }
 
-    /* RETURN: infer the return expression type */
     case NODE_RETURN:
         if (node->children_count > 0)
         {
@@ -379,44 +308,37 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         }
         return;
 
-    /* BLOCK: analyze each statement in order */
     case NODE_BLOCK:
         for (int i = 0; i < node->children_count; i++)
             analyze_node(sa, node->children[i]);
         return;
 
-    /* BREAK / CONTINUE / PASS: nothing to infer */
     case NODE_BREAK:
     case NODE_CONTINUE:
     case NODE_PASS:
         return;
 
     default:
-        /* Expression nodes not handled above — run type inference */
         infer_type(sa, node);
         return;
     }
 
-    /* Default fall-through: recurse into children */
     for (int i = 0; i < node->children_count; i++)
         analyze_node(sa, node->children[i]);
 }
 
-/* ------------------------------------------------------------------ */
-/* Public API                                                           */
-/* ------------------------------------------------------------------ */
-
+/* Entry point. Initializes the global scope and walks the program top-down.
+   Returns the same root pointer with inferred_type filled in on every node. */
 ASTNode *semantic_analyze(ASTNode *root, ErrorList *errors)
 {
     if (!root)
         return NULL;
 
     SemanticAnalyzer sa;
-    sa.errors = errors;
+    sa.errors  = errors;
     symbol_table_init(&sa.global, NULL);
     sa.current = &sa.global;
 
-    /* Walk from the root (NODE_PROGRAM) downward */
     if (root->type == NODE_PROGRAM)
     {
         for (int i = 0; i < root->children_count; i++)

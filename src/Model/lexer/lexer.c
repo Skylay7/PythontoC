@@ -9,11 +9,9 @@ static void report_error(Lexer *lexer, const char *message, int line, int column
     error_list_add_staged(lexer->errors, message, line, column, STAGE_LEXER);
 }
 
-/* ------------------------------------------------------------------ */
-/* Position helpers                                                     */
-/* ------------------------------------------------------------------ */
+// Position helpers — read-only queries on the current lexer state.
 
-/* Returns the character at the current position, or '\0' at end. */
+// Returns '\0' at end of input.
 static char current_char(const Lexer *lexer)
 {
     if (lexer->position >= lexer->length)
@@ -21,7 +19,7 @@ static char current_char(const Lexer *lexer)
     return lexer->source[lexer->position];
 }
 
-/* Returns the character one ahead of current, or '\0' at end. */
+// Returns '\0' if there is no next character.
 static char peek_next(const Lexer *lexer)
 {
     if (lexer->position + 1 >= lexer->length)
@@ -29,13 +27,12 @@ static char peek_next(const Lexer *lexer)
     return lexer->source[lexer->position + 1];
 }
 
-/* Returns 1 if the lexer has consumed all input. */
 static int at_end(const Lexer *lexer)
 {
     return lexer->position >= lexer->length;
 }
 
-/* Advances position by one, updating line/column tracking. */
+// Advances one character and updates line/column tracking.
 static void advance(Lexer *lexer)
 {
     if (at_end(lexer))
@@ -52,11 +49,6 @@ static void advance(Lexer *lexer)
     lexer->position++;
 }
 
-/* ------------------------------------------------------------------ */
-/* Token construction                                                   */
-/* ------------------------------------------------------------------ */
-
-/* Builds a Token with the given type, value string, and position. */
 static Token make_token(TokenType type, const char *value, int line, int col)
 {
     Token t;
@@ -68,33 +60,24 @@ static Token make_token(TokenType type, const char *value, int line, int col)
     return t;
 }
 
-/* ------------------------------------------------------------------ */
-/* Character classification helpers                                     */
-/* ------------------------------------------------------------------ */
+// Character classification helpers.
 
-/* Returns 1 if c is an ASCII letter. */
 static int is_letter(char c)
 {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-/* Returns 1 if c is an ASCII decimal digit. */
 static int is_digit(char c)
 {
     return c >= '0' && c <= '9';
 }
 
-/* Returns 1 if c is a letter or digit. */
 static int is_alphanumeric(char c)
 {
     return is_letter(c) || is_digit(c);
 }
 
-/* ------------------------------------------------------------------ */
-/* Identifier validation (DFA)                                          */
-/* ------------------------------------------------------------------ */
-
-/* Returns 1 if the string is a valid Python identifier:
+/* Returns 1 if s is a valid Python identifier:
    first char must be letter or '_', rest letters/digits/'_'. */
 static int is_valid_identifier(const char *s)
 {
@@ -112,11 +95,7 @@ static int is_valid_identifier(const char *s)
     return 1;
 }
 
-/* ------------------------------------------------------------------ */
-/* Whitespace / comment skipping                                        */
-/* ------------------------------------------------------------------ */
-
-/* Skips spaces (not newlines) and '#' line comments. */
+// Skips spaces (not newlines) and '#' line comments.
 static void skip_whitespace_and_comments(Lexer *lexer)
 {
     while (!at_end(lexer))
@@ -128,7 +107,7 @@ static void skip_whitespace_and_comments(Lexer *lexer)
         }
         else if (c == '#')
         {
-            /* Skip to end of line (but don't consume the newline itself) */
+            // skip to end of line but don't consume the newline
             while (!at_end(lexer) && current_char(lexer) != '\n')
                 advance(lexer);
         }
@@ -139,12 +118,8 @@ static void skip_whitespace_and_comments(Lexer *lexer)
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Indentation handling (PDA logic)                                     */
-/* ------------------------------------------------------------------ */
-
-/* Counts leading spaces on the current line.
-   Returns -1 and reports an error if a tab is encountered. */
+// Counts leading spaces on the current line.
+// Returns -1 and reports an error if a tab is found.
 static int count_indent(Lexer *lexer)
 {
     int spaces = 0;
@@ -170,37 +145,31 @@ static int count_indent(Lexer *lexer)
     return spaces;
 }
 
-/* Handles the indentation PDA at the start of a logical line.
-   Sets pending_dedents or returns an INDENT/DEDENT/nothing token.
-   Returns a token if one should be emitted immediately, otherwise a
-   TOKEN_EOF sentinel with type TOKEN_COUNT to signal "no token yet". */
+/* Handles indentation at the start of a logical line (the PDA part).
+   Returns TOKEN_COUNT as a sentinel when there is nothing to emit yet
+   (blank line, same indent level). Otherwise returns INDENT or DEDENT. */
 static Token handle_indentation(Lexer *lexer)
 {
     int start_line = lexer->line;
-    int start_col  = lexer->column;
+    int start_col = lexer->column;
 
     int indent = count_indent(lexer);
 
-    /* Blank line or comment-only line — skip it entirely */
+    // blank line or comment-only line — not a logical line, nothing to emit
     if (current_char(lexer) == '\n' || current_char(lexer) == '#' || at_end(lexer))
     {
-        /* not a logical line, signal caller to skip */
         Token skip;
-        skip.type = TOKEN_COUNT; /* sentinel: "nothing to emit" */
+        skip.type = TOKEN_COUNT; // sentinel: "nothing to emit"
         return skip;
     }
 
-    /* Tab error during indent count */
     if (indent < 0)
-    {
         return make_token(TOKEN_ERROR, "tab in indentation", start_line, start_col);
-    }
 
     int top = indent_stack_peek(&lexer->indent_stack);
 
     if (indent == top)
     {
-        /* Same level — no structural token */
         Token skip;
         skip.type = TOKEN_COUNT;
         return skip;
@@ -212,7 +181,7 @@ static Token handle_indentation(Lexer *lexer)
     }
     else
     {
-        /* Dedent: pop until we match or error */
+        // pop until we match, counting how many DEDENTs are owed
         while (indent_stack_peek(&lexer->indent_stack) > indent)
         {
             indent_stack_pop(&lexer->indent_stack);
@@ -223,21 +192,19 @@ static Token handle_indentation(Lexer *lexer)
             report_error(lexer, "Indentation level does not match any outer block", start_line, start_col);
             return make_token(TOKEN_ERROR, "bad dedent", start_line, start_col);
         }
-        /* Return first DEDENT now; the rest are delivered via pending_dedents */
+        // return first DEDENT now; the rest come out via pending_dedents
         lexer->pending_dedents--;
         return make_token(TOKEN_DEDENT, "", start_line, start_col);
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Scanners                                                             */
-/* ------------------------------------------------------------------ */
+// Scanners — each one consumes characters and returns one token.
 
-/* Scans a word (identifier or keyword), validates it, looks it up. */
+// Scans an identifier or keyword; looks up in the keyword table to decide token type.
 static Token scan_word(Lexer *lexer)
 {
     int start_line = lexer->line;
-    int start_col  = lexer->column;
+    int start_col = lexer->column;
     int i = 0;
     char buf[LEXER_BUFFER_SIZE];
 
@@ -259,11 +226,11 @@ static Token scan_word(Lexer *lexer)
     return make_token(kw, buf, start_line, start_col);
 }
 
-/* Scans an integer or float literal. */
+// Scans an integer or float literal (floats require a digit after the dot).
 static Token scan_number(Lexer *lexer)
 {
     int start_line = lexer->line;
-    int start_col  = lexer->column;
+    int start_col = lexer->column;
     int i = 0;
     char buf[LEXER_BUFFER_SIZE];
     int is_float = 0;
@@ -280,7 +247,7 @@ static Token scan_number(Lexer *lexer)
         is_float = 1;
         if (i < LEXER_BUFFER_SIZE - 1)
             buf[i++] = '.';
-        advance(lexer); /* consume '.' */
+        advance(lexer); // consume '.'
 
         while (!at_end(lexer) && is_digit(current_char(lexer)))
         {
@@ -294,13 +261,13 @@ static Token scan_number(Lexer *lexer)
     return make_token(is_float ? TOKEN_FLOAT_LITERAL : TOKEN_INT_LITERAL, buf, start_line, start_col);
 }
 
-/* Scans a single- or double-quoted string literal. */
+// Scans a single- or double-quoted string. Reports an error on unterminated strings.
 static Token scan_string(Lexer *lexer)
 {
     int start_line = lexer->line;
-    int start_col  = lexer->column;
+    int start_col = lexer->column;
     char quote = current_char(lexer);
-    advance(lexer); /* consume opening quote */
+    advance(lexer); // consume opening quote
 
     int i = 0;
     char buf[LEXER_BUFFER_SIZE];
@@ -325,16 +292,16 @@ static Token scan_string(Lexer *lexer)
         return make_token(TOKEN_ERROR, buf, start_line, start_col);
     }
 
-    advance(lexer); /* consume closing quote */
+    advance(lexer); // consume closing quote
     buf[i] = '\0';
     return make_token(TOKEN_STRING_LITERAL, buf, start_line, start_col);
 }
 
-/* Scans operators, using one character of lookahead for two-char forms. */
+// Scans operators, using one character of lookahead for two-char forms.
 static Token scan_operator(Lexer *lexer)
 {
     int start_line = lexer->line;
-    int start_col  = lexer->column;
+    int start_col = lexer->column;
     char c = current_char(lexer);
     advance(lexer);
     char next = current_char(lexer);
@@ -342,32 +309,72 @@ static Token scan_operator(Lexer *lexer)
     switch (c)
     {
     case '+':
-        if (next == '=') { advance(lexer); return make_token(TOKEN_PLUS_ASSIGN,  "+=", start_line, start_col); }
-        return make_token(TOKEN_PLUS,  "+", start_line, start_col);
+        if (next == '=')
+        {
+            advance(lexer);
+            return make_token(TOKEN_PLUS_ASSIGN, "+=", start_line, start_col);
+        }
+        return make_token(TOKEN_PLUS, "+", start_line, start_col);
     case '-':
-        if (next == '=') { advance(lexer); return make_token(TOKEN_MINUS_ASSIGN, "-=", start_line, start_col); }
+        if (next == '=')
+        {
+            advance(lexer);
+            return make_token(TOKEN_MINUS_ASSIGN, "-=", start_line, start_col);
+        }
         return make_token(TOKEN_MINUS, "-", start_line, start_col);
     case '*':
-        if (next == '*') { advance(lexer); return make_token(TOKEN_DOUBLE_STAR,  "**", start_line, start_col); }
-        if (next == '=') { advance(lexer); return make_token(TOKEN_STAR_ASSIGN,  "*=", start_line, start_col); }
-        return make_token(TOKEN_STAR,  "*", start_line, start_col);
+        if (next == '*')
+        {
+            advance(lexer);
+            return make_token(TOKEN_DOUBLE_STAR, "**", start_line, start_col);
+        }
+        if (next == '=')
+        {
+            advance(lexer);
+            return make_token(TOKEN_STAR_ASSIGN, "*=", start_line, start_col);
+        }
+        return make_token(TOKEN_STAR, "*", start_line, start_col);
     case '/':
-        if (next == '/') { advance(lexer); return make_token(TOKEN_DOUBLE_SLASH, "//", start_line, start_col); }
-        if (next == '=') { advance(lexer); return make_token(TOKEN_SLASH_ASSIGN, "/=", start_line, start_col); }
+        if (next == '/')
+        {
+            advance(lexer);
+            return make_token(TOKEN_DOUBLE_SLASH, "//", start_line, start_col);
+        }
+        if (next == '=')
+        {
+            advance(lexer);
+            return make_token(TOKEN_SLASH_ASSIGN, "/=", start_line, start_col);
+        }
         return make_token(TOKEN_SLASH, "/", start_line, start_col);
     case '%':
         return make_token(TOKEN_PERCENT, "%", start_line, start_col);
     case '=':
-        if (next == '=') { advance(lexer); return make_token(TOKEN_EQ,  "==", start_line, start_col); }
+        if (next == '=')
+        {
+            advance(lexer);
+            return make_token(TOKEN_EQ, "==", start_line, start_col);
+        }
         return make_token(TOKEN_ASSIGN, "=", start_line, start_col);
     case '!':
-        if (next == '=') { advance(lexer); return make_token(TOKEN_NEQ, "!=", start_line, start_col); }
+        if (next == '=')
+        {
+            advance(lexer);
+            return make_token(TOKEN_NEQ, "!=", start_line, start_col);
+        }
         break;
     case '<':
-        if (next == '=') { advance(lexer); return make_token(TOKEN_LTE, "<=", start_line, start_col); }
+        if (next == '=')
+        {
+            advance(lexer);
+            return make_token(TOKEN_LTE, "<=", start_line, start_col);
+        }
         return make_token(TOKEN_LT, "<", start_line, start_col);
     case '>':
-        if (next == '=') { advance(lexer); return make_token(TOKEN_GTE, ">=", start_line, start_col); }
+        if (next == '=')
+        {
+            advance(lexer);
+            return make_token(TOKEN_GTE, ">=", start_line, start_col);
+        }
         return make_token(TOKEN_GT, ">", start_line, start_col);
     default:
         break;
@@ -378,11 +385,11 @@ static Token scan_operator(Lexer *lexer)
     return make_token(TOKEN_ERROR, val, start_line, start_col);
 }
 
-/* Scans a single-character delimiter. */
+// Scans a single-character delimiter.
 static Token scan_delimiter(Lexer *lexer)
 {
     int start_line = lexer->line;
-    int start_col  = lexer->column;
+    int start_col = lexer->column;
     char c = current_char(lexer);
     advance(lexer);
 
@@ -390,58 +397,64 @@ static Token scan_delimiter(Lexer *lexer)
 
     switch (c)
     {
-    case '(': return make_token(TOKEN_LPAREN,   val, start_line, start_col);
-    case ')': return make_token(TOKEN_RPAREN,   val, start_line, start_col);
-    case '[': return make_token(TOKEN_LBRACKET, val, start_line, start_col);
-    case ']': return make_token(TOKEN_RBRACKET, val, start_line, start_col);
-    case '{': return make_token(TOKEN_LBRACE,   val, start_line, start_col);
-    case '}': return make_token(TOKEN_RBRACE,   val, start_line, start_col);
-    case ':': return make_token(TOKEN_COLON,    val, start_line, start_col);
-    case ',': return make_token(TOKEN_COMMA,    val, start_line, start_col);
-    case '.': return make_token(TOKEN_DOT,      val, start_line, start_col);
-    default:  break;
+    case '(':
+        return make_token(TOKEN_LPAREN, val, start_line, start_col);
+    case ')':
+        return make_token(TOKEN_RPAREN, val, start_line, start_col);
+    case '[':
+        return make_token(TOKEN_LBRACKET, val, start_line, start_col);
+    case ']':
+        return make_token(TOKEN_RBRACKET, val, start_line, start_col);
+    case '{':
+        return make_token(TOKEN_LBRACE, val, start_line, start_col);
+    case '}':
+        return make_token(TOKEN_RBRACE, val, start_line, start_col);
+    case ':':
+        return make_token(TOKEN_COLON, val, start_line, start_col);
+    case ',':
+        return make_token(TOKEN_COMMA, val, start_line, start_col);
+    case '.':
+        return make_token(TOKEN_DOT, val, start_line, start_col);
+    default:
+        break;
     }
 
     report_error(lexer, "Unrecognized delimiter", start_line, start_col);
     return make_token(TOKEN_ERROR, val, start_line, start_col);
 }
 
-/* ------------------------------------------------------------------ */
-/* Public API                                                           */
-/* ------------------------------------------------------------------ */
-
-/* Initializes the lexer state for the given null-terminated source string. */
+// Initializes the lexer state for the given null-terminated source string.
 void lexer_init(Lexer *lexer, const char *source, ErrorList *errors)
 {
-    lexer->source          = source;
-    lexer->position        = 0;
-    lexer->length          = (int)strlen(source);
-    lexer->line            = 1;
-    lexer->column          = 1;
+    lexer->source = source;
+    lexer->position = 0;
+    lexer->length = (int)strlen(source);
+    lexer->line = 1;
+    lexer->column = 1;
     lexer->pending_dedents = 0;
-    lexer->at_line_start   = 1;
-    lexer->buffer_length   = 0;
-    lexer->buffer[0]       = '\0';
-    lexer->errors          = errors;
+    lexer->at_line_start = 1;
+    lexer->buffer_length = 0;
+    lexer->buffer[0] = '\0';
+    lexer->errors = errors;
 
     indent_stack_init(&lexer->indent_stack);
-    indent_stack_push(&lexer->indent_stack, 0); /* base indentation level */
+    indent_stack_push(&lexer->indent_stack, 0); // base indentation level
 
     keyword_table_init(&lexer->keyword_table);
 }
 
 /* Returns the next token from the source stream.
-   Must be called repeatedly until TOKEN_EOF is returned. */
+   Call repeatedly until TOKEN_EOF. Handles INDENT/DEDENT internally. */
 Token lexer_next_token(Lexer *lexer)
 {
-    /* Deliver any queued DEDENTs before reading new input */
+    // deliver any queued DEDENTs before reading new input
     if (lexer->pending_dedents > 0)
     {
         lexer->pending_dedents--;
         return make_token(TOKEN_DEDENT, "", lexer->line, lexer->column);
     }
 
-    /* Emit remaining DEDENTs at end of file */
+    // emit remaining DEDENTs at end of file before the final EOF token
     if (at_end(lexer))
     {
         if (indent_stack_peek(&lexer->indent_stack) > 0)
@@ -452,49 +465,45 @@ Token lexer_next_token(Lexer *lexer)
         return make_token(TOKEN_EOF, "", lexer->line, lexer->column);
     }
 
-    /* Handle newline: emit NEWLINE token and set at_line_start */
     if (current_char(lexer) == '\n')
     {
-        int tok_line = lexer->line;
-        int tok_col  = lexer->column;
-        advance(lexer); /* consume '\n', line/col updated inside advance */
-        lexer->at_line_start = 1;
-        return make_token(TOKEN_NEWLINE, "\\n", tok_line, tok_col);
-    }
-
-    /* Handle tab outside of indentation position */
-    if (current_char(lexer) == '\t')
-    {
-        int tok_line = lexer->line;
-        int tok_col  = lexer->column;
-        report_error(lexer, "Tab character not allowed", tok_line, tok_col);
+        int start_line = lexer->line;
+        int start_col = lexer->column;
         advance(lexer);
-        return make_token(TOKEN_ERROR, "\t", tok_line, tok_col);
+        lexer->at_line_start = 1;
+        return make_token(TOKEN_NEWLINE, "\\n", start_line, start_col);
     }
 
-    /* At start of a logical line: handle indentation */
+    if (current_char(lexer) == '\t') // tab outside of indentation position
+    {
+        int start_line = lexer->line;
+        int start_col = lexer->column;
+        report_error(lexer, "Tab character not allowed", start_line, start_col);
+        advance(lexer);
+        return make_token(TOKEN_ERROR, "\t", start_line, start_col);
+    }
+
     if (lexer->at_line_start)
     {
         lexer->at_line_start = 0;
         Token ind = handle_indentation(lexer);
 
-        /* TOKEN_COUNT is our "nothing to emit" sentinel */
-        if (ind.type != TOKEN_COUNT)
+        if (ind.type != TOKEN_COUNT) // TOKEN_COUNT means "nothing to emit, keep going"
             return ind;
 
-        /* Blank/comment line: consume comment (if any) so recursion terminates */
+        // blank/comment line — consume comment so the recursive call terminates
         if (current_char(lexer) == '#' || current_char(lexer) == '\n' || at_end(lexer))
         {
-            skip_whitespace_and_comments(lexer); /* consume '#...' up to '\n' */
+            skip_whitespace_and_comments(lexer);
             lexer->at_line_start = 1;
             return lexer_next_token(lexer);
         }
     }
 
-    /* Skip spaces and comments mid-line */
+    // Skip spaces and comments mid-line
     skip_whitespace_and_comments(lexer);
 
-    /* Re-check after skipping (e.g. comment consumed rest of line) */
+    // Re-check after skipping (e.g. comment consumed rest of line)
     if (at_end(lexer))
         return lexer_next_token(lexer);
 
@@ -503,7 +512,6 @@ Token lexer_next_token(Lexer *lexer)
 
     char c = current_char(lexer);
 
-    /* Route to the appropriate scanner */
     if (is_letter(c) || c == '_')
         return scan_word(lexer);
 
@@ -521,11 +529,11 @@ Token lexer_next_token(Lexer *lexer)
         c == '=' || c == '!' || c == '<' || c == '>')
         return scan_operator(lexer);
 
-    /* Unknown character */
-    int tok_line = lexer->line;
-    int tok_col  = lexer->column;
-    char val[2]  = {c, '\0'};
-    report_error(lexer, "Unrecognized character", tok_line, tok_col);
+    // it's an Unknown character.
+    int start_line = lexer->line;
+    int start_col = lexer->column;
+    char val[2] = {c, '\0'};
+    report_error(lexer, "Unrecognized character", start_line, start_col);
     advance(lexer);
-    return make_token(TOKEN_ERROR, val, tok_line, tok_col);
+    return make_token(TOKEN_ERROR, val, start_line, start_col);
 }
