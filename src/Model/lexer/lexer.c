@@ -6,7 +6,7 @@
 
 static void report_error(Lexer *lexer, const char *message, int line, int column)
 {
-    error_list_add(lexer->errors, message, line, column);
+    error_list_add_staged(lexer->errors, message, line, column, STAGE_LEXER);
 }
 
 /* ------------------------------------------------------------------ */
@@ -349,9 +349,11 @@ static Token scan_operator(Lexer *lexer)
         return make_token(TOKEN_MINUS, "-", start_line, start_col);
     case '*':
         if (next == '*') { advance(lexer); return make_token(TOKEN_DOUBLE_STAR,  "**", start_line, start_col); }
+        if (next == '=') { advance(lexer); return make_token(TOKEN_STAR_ASSIGN,  "*=", start_line, start_col); }
         return make_token(TOKEN_STAR,  "*", start_line, start_col);
     case '/':
         if (next == '/') { advance(lexer); return make_token(TOKEN_DOUBLE_SLASH, "//", start_line, start_col); }
+        if (next == '=') { advance(lexer); return make_token(TOKEN_SLASH_ASSIGN, "/=", start_line, start_col); }
         return make_token(TOKEN_SLASH, "/", start_line, start_col);
     case '%':
         return make_token(TOKEN_PERCENT, "%", start_line, start_col);
