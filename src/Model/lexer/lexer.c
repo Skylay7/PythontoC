@@ -216,12 +216,14 @@ static Token scan_word(Lexer *lexer)
     }
     buf[i] = '\0';
 
+    // check if it's a valid identifier
     if (!is_valid_identifier(buf))
     {
         report_error(lexer, "Invalid identifier", start_line, start_col);
         return make_token(TOKEN_ERROR, buf, start_line, start_col);
     }
 
+    // check if it's a keyword
     TokenType kw = keyword_table_lookup(&lexer->keyword_table, buf);
     return make_token(kw, buf, start_line, start_col);
 }
@@ -235,6 +237,7 @@ static Token scan_number(Lexer *lexer)
     char buf[LEXER_BUFFER_SIZE];
     int is_float = 0;
 
+    // integer part
     while (!at_end(lexer) && is_digit(current_char(lexer)))
     {
         if (i < LEXER_BUFFER_SIZE - 1)
@@ -242,6 +245,7 @@ static Token scan_number(Lexer *lexer)
         advance(lexer);
     }
 
+    // optional fractional part if it is a FLOAT_LITERAL
     if (!at_end(lexer) && current_char(lexer) == '.' && is_digit(peek_next(lexer)))
     {
         is_float = 1;
@@ -427,12 +431,12 @@ static Token scan_delimiter(Lexer *lexer)
 void lexer_init(Lexer *lexer, const char *source, ErrorList *errors)
 {
     lexer->source = source;
-    lexer->position = 0;
+    lexer->position = 0; // start at the beginning of the source
     lexer->length = (int)strlen(source);
     lexer->line = 1;
     lexer->column = 1;
     lexer->pending_dedents = 0;
-    lexer->at_line_start = 1;
+    lexer->at_line_start = 1; // start at the beginning of a line
     lexer->buffer_length = 0;
     lexer->buffer[0] = '\0';
     lexer->errors = errors;
