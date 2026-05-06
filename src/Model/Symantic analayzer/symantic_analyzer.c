@@ -79,6 +79,23 @@ static SemanticType promote(SemanticType a, SemanticType b)
     return STYPE_ERROR;
 }
 
+/* Merges two observed return types into one. STYPE_NONE is the neutral element (no return seen yet).
+   Returns STYPE_UNKNOWN if the types conflict with no valid promotion. */
+static SemanticType promote_return(SemanticType a, SemanticType b)
+{
+    if (a == b)
+        return a;
+    if (a == STYPE_NONE)
+        return b;
+    if (b == STYPE_NONE)
+        return a;
+    if (a == STYPE_INT && b == STYPE_FLOAT)
+        return STYPE_FLOAT;
+    if (a == STYPE_FLOAT && b == STYPE_INT)
+        return STYPE_FLOAT;
+    return STYPE_UNKNOWN; // conflict
+}
+
 static int is_condition_type(SemanticType t)
 {
     return t == STYPE_BOOL || t == STYPE_INT || t == STYPE_FLOAT;
@@ -360,8 +377,12 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
 
     case NODE_DEF:
     {
-        symbol_table_set(sa->current, node->value, STYPE_FUNCTION);
+        // register as STYPE_UNKNOWN initially; updated to actual return type after body analysis
+        symbol_table_set(sa->current, node->value, STYPE_UNKNOWN);
         push_scope(sa);
+
+        SemanticType saved_return = sa->current_fn_return;
+        sa->current_fn_return = STYPE_NONE;
 
         ASTNode *params = (node->children_count > 0 &&
                            node->children[0]->type == NODE_PARAM_LIST)
@@ -382,11 +403,10 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
             }
         }
 
-        // body analysis will refine param types via the symbol table, so analyze it before reading back param types
         if (node->children_count > 1)
             analyze_node(sa, node->children[1]);
 
-        // read back refined types — body analysis may have updated the symbol table
+        // read back refined param types after body analysis
         if (params)
         {
             for (int i = 0; i < params->children_count; i++)
@@ -401,7 +421,13 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
             }
         }
 
+        SemanticType final_ret = sa->current_fn_return; // STYPE_NONE if no return statement
+        node->inferred_type = final_ret;
+        sa->current_fn_return = saved_return;
+
         pop_scope(sa);
+        // update function's type in parent scope with the inferred return type
+        symbol_table_set(sa->current, node->value, final_ret);
         return;
     }
 
@@ -410,6 +436,10 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         {
             SemanticType rt = infer_type(sa, node->children[0]);
             node->inferred_type = rt;
+            sa->current_fn_return = promote_return(sa->current_fn_return, rt);
+            if (sa->current_fn_return == STYPE_UNKNOWN)
+                error_list_add_staged(sa->errors, "Function has inconsistent return types",
+                                      node->line, node->column, STAGE_SEMANTIC);
         }
         return;
 
@@ -441,6 +471,7 @@ ASTNode *semantic_analyze(ASTNode *root, ErrorList *errors)
 
     SemanticAnalyzer sa;
     sa.errors = errors;
+    sa.current_fn_return = STYPE_NONE;
     symbol_table_init(&sa.global, NULL);
     sa.current = &sa.global;
 

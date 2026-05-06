@@ -217,8 +217,9 @@ static ASTNode *parse_expression(Parser *parser)
     int out_top = -1;
     int op_top = -1;
     int expect_operand = 1; // 1 = waiting for operand, 0 = waiting for operator
+    int parse_failed = 0;
 
-    while (!at_end(parser))
+    while (!at_end(parser) && !parse_failed)
     {
         const Token *t = current_token(parser);
         TokenType type = t->type;
@@ -309,7 +310,10 @@ static ASTNode *parse_expression(Parser *parser)
             {
                 if (apply_operator(op_stack, &op_top, out_stack, &out_top,
                                    parser->errors) != 0)
-                    goto expr_error;
+                {
+                    parse_failed = 1;
+                    break;
+                }
             }
             // pop pending unary operators that bind tighter
             while (op_top >= 0 &&
@@ -318,7 +322,10 @@ static ASTNode *parse_expression(Parser *parser)
             {
                 if (apply_operator(op_stack, &op_top, out_stack, &out_top,
                                    parser->errors) != 0)
-                    goto expr_error;
+                {
+                    parse_failed = 1;
+                    break;
+                }
             }
 
             // push current operator on stack
@@ -338,22 +345,19 @@ static ASTNode *parse_expression(Parser *parser)
     }
 
     // flush remaining operators
-    while (op_top >= 0)
+    while (op_top >= 0 && !parse_failed)
     {
         if (apply_operator(op_stack, &op_top, out_stack, &out_top,
                            parser->errors) != 0)
-            goto expr_error;
+            parse_failed = 1;
     }
 
-    if (out_top >= 0)
+    if (!parse_failed && out_top >= 0)
         return out_stack[out_top];
 
-expr_error:
-{
-    const Token *t = current_token(parser);
-    error_list_add_staged(parser->errors, "Expected expression", t->line, t->column, STAGE_PARSER);
-    return ast_node_create(NODE_INT_LITERAL, "0", t->line, t->column);
-}
+    const Token *err_tok = current_token(parser);
+    error_list_add_staged(parser->errors, "Expected expression", err_tok->line, err_tok->column, STAGE_PARSER);
+    return ast_node_create(NODE_INT_LITERAL, "0", err_tok->line, err_tok->column);
 }
 
 // Parses an INDENT-delimited block: INDENT { statement } DEDENT → NODE_BLOCK
