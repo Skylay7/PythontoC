@@ -221,9 +221,10 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
                 error_list_add_staged(sa->errors, "Type mismatch in binary expression",
                                       node->line, node->column, STAGE_SEMANTIC);
             }
-            else
+            else if (sa->current != sa->global)
             {
-                // if arithmetic promotion changed one side, refine that identifier too
+                // only refine arithmetic types inside function scope (for params);
+                // global variables are explicitly typed by assignment and must not be changed
                 if (result != left)
                     refine_identifier_type(sa, left_node, result);
                 if (result != right)

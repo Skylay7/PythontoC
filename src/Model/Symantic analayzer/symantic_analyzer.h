@@ -6,7 +6,7 @@
 #include "../parser/ast_ds.h"
 #include "../errors/errors.h"
 
-#define SYMBOL_TABLE_SIZE 64
+#define SYMBOL_TABLE_SIZE 256
 #define MAX_SYMBOL_NAME 256
 #define MAX_CHILD_SCOPES 64
 
