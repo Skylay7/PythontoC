@@ -477,6 +477,7 @@ ASTNode *semantic_analyze(ASTNode *root, ErrorList *errors, SymbolTable **out_sc
     symbol_table_init(sa.global, NULL);
     sa.current = sa.global;
 
+    // if the root is a NODE_PROGRAM, analyze each child as a separate top-level statement
     if (root->type == NODE_PROGRAM)
     {
         for (int i = 0; i < root->children_count; i++)
@@ -486,7 +487,7 @@ ASTNode *semantic_analyze(ASTNode *root, ErrorList *errors, SymbolTable **out_sc
     {
         analyze_node(&sa, root);
     }
-    
+
     if (out_scope)
         *out_scope = sa.global;
 

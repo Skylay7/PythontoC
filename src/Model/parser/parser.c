@@ -116,6 +116,7 @@ typedef struct
 } OpInfo;
 
 static const OpInfo op_info[TOKEN_COUNT] = {
+    // sign, precedence, is_binary, is_right_assoc
     [TOKEN_OR] = {"or", 1, 1, 0},
     [TOKEN_AND] = {"and", 2, 1, 0},
     [TOKEN_NOT] = {"not", 3, 0, 0}, // unary — not binary
