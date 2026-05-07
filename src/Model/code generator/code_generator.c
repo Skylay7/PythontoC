@@ -2,7 +2,9 @@
  *
  * Walks the typed AST and produces C source text. Function definitions
  * go into a separate buffer so they appear before main() in the output.
- * Expressions are written inline; statements write full lines with newlines.
+ * Variable declarations are tracked via the declared_in_c flag on the
+ * symbol table entries produced by the semantic analyzer — no separate
+ * DeclTable needed.
  */
 
 #include "code_generator.h"
@@ -14,14 +16,14 @@
 typedef struct
 {
     char *data;
-    int len;
-    int cap;
+    int   len;
+    int   cap;
 } CodeBuf;
 
 static int buf_init(CodeBuf *b)
 {
-    b->cap = 4096;
-    b->len = 0;
+    b->cap  = 4096;
+    b->len  = 0;
     b->data = malloc((size_t)b->cap);
     if (b->data)
         b->data[0] = '\0';
@@ -40,12 +42,12 @@ static int buf_write(CodeBuf *b, const char *s)
     int slen = (int)strlen(s);
     if (b->len + slen + 1 > b->cap)
     {
-        int new_cap = b->cap * 2 + slen + 1;
+        int   new_cap  = b->cap * 2 + slen + 1;
         char *new_data = realloc(b->data, (size_t)new_cap);
         if (!new_data)
             return -1;
         b->data = new_data;
-        b->cap = new_cap;
+        b->cap  = new_cap;
     }
     memcpy(b->data + b->len, s, (size_t)slen);
     b->len += slen;
@@ -53,78 +55,15 @@ static int buf_write(CodeBuf *b, const char *s)
     return 0;
 }
 
-/* Tracks which variables have been declared in the current C scope.
-   First assignment → emit type + name. Subsequent ones → just name. */
-#define DECL_SIZE 128
-
-typedef struct
-{
-    char name[256];
-    int used;
-} DeclEntry;
-typedef struct
-{
-    DeclEntry entries[DECL_SIZE];
-} DeclTable;
-
-static void decl_init(DeclTable *t)
-{
-    for (int i = 0; i < DECL_SIZE; i++)
-        t->entries[i].used = 0;
-}
-
-static unsigned int decl_hash(const char *s)
-{
-    unsigned int h = 0;
-    while (*s)
-        h = h * 31 + (unsigned char)*s++;
-    return h;
-}
-
-static int decl_contains(const DeclTable *t, const char *name)
-{
-    unsigned int index = decl_hash(name) & (DECL_SIZE - 1);
-    int probes = 0;
-    while (t->entries[index].used && probes < DECL_SIZE)
-    {
-        if (strcmp(t->entries[index].name, name) == 0)
-            return 1;
-        index = (index + 1) & (DECL_SIZE - 1);
-        probes++;
-    }
-    return 0;
-}
-
-static void decl_mark(DeclTable *t, const char *name)
-{
-    unsigned int index = decl_hash(name) & (DECL_SIZE - 1);
-    int probes = 0;
-    while (t->entries[index].used &&
-           strcmp(t->entries[index].name, name) != 0 &&
-           probes < DECL_SIZE)
-    {
-        index = (index + 1) & (DECL_SIZE - 1);
-        probes++;
-    }
-    strncpy(t->entries[index].name, name, 255);
-    t->entries[index].name[255] = '\0';
-    t->entries[index].used = 1;
-}
-
 static const char *stype_to_c(SemanticType t)
 {
     switch (t)
     {
-    case STYPE_FLOAT:
-        return "double";
-    case STYPE_STRING:
-        return "const char *";
-    case STYPE_BOOL:
-        return "int";
-    case STYPE_NONE:
-        return "void";
-    default:
-        return "int";
+    case STYPE_FLOAT:  return "double";
+    case STYPE_STRING: return "const char *";
+    case STYPE_BOOL:   return "int";
+    case STYPE_NONE:   return "void";
+    default:           return "int";
     }
 }
 
@@ -132,23 +71,60 @@ static const char *stype_to_fmt(SemanticType t)
 {
     switch (t)
     {
-    case STYPE_FLOAT:
-        return "%f";
-    case STYPE_STRING:
-        return "%s";
-    default:
-        return "%d";
+    case STYPE_FLOAT:  return "%f";
+    case STYPE_STRING: return "%s";
+    default:           return "%d";
     }
 }
 
+// C operators for compound assignments, indexed by (NodeType - NODE_ASSIGN_PLUS).
+static const char *compound_op[] = {"+=", "-=", "*=", "/="};
+
 typedef struct
 {
-    CodeBuf *buf;
-    DeclTable *decl;
-    int indent;
-    int tmp_counter; // for generating unique __tmp_N temp variable names
-    ErrorList *errors;
+    CodeBuf     *buf;
+    SymbolTable *current_scope; // mirrors the semantic analyzer's scope tree
+    int          indent;
+    int          tmp_counter;   // for generating unique __tmp_N temp variable names
+    ErrorList   *errors;
 } CodeGen;
+
+/* Advance into the next child scope of the current scope. */
+static void cg_scope_enter(CodeGen *cg)
+{
+    SymbolTable *s = cg->current_scope;
+    if (s && s->next_child < s->child_count)
+        cg->current_scope = s->children[s->next_child++];
+}
+
+/* Step back to the parent scope. */
+static void cg_scope_exit(CodeGen *cg)
+{
+    if (cg->current_scope && cg->current_scope->parent)
+        cg->current_scope = cg->current_scope->parent;
+}
+
+/* Resolves the type of a node.
+   Identifiers and function calls are looked up in the scope chain — symbol table is the authority.
+   Everything else (literals, operators) reads node->inferred_type since those have no table entry. */
+static SemanticType get_type(CodeGen *cg, const ASTNode *node)
+{
+    if (!node)
+        return STYPE_UNKNOWN;
+    if (node->type == NODE_IDENTIFIER || node->type == NODE_FUNCTION_CALL)
+    {
+        SymbolTable *scope = cg->current_scope;
+        while (scope)
+        {
+            SymbolEntry *e = symbol_table_lookup_local(scope, node->value);
+            if (e)
+                return e->type;
+            scope = scope->parent;
+        }
+        return STYPE_UNKNOWN;
+    }
+    return node->inferred_type;
+}
 
 static void write_indent(CodeGen *cg)
 {
@@ -185,6 +161,36 @@ static void gen_str_concat_temp(CodeGen *cg, const ASTNode *node, char *out_name
     buf_write(cg->buf, ", ");
     gen_expr(cg, node->children_count > 1 ? node->children[1] : NULL);
     buf_write(cg->buf, ");\n");
+}
+
+/* Pre-generates a temp buffer for each string-concat arg in children[0..count-1].
+   tmp_names[i] is set to the temp name if child i needed one, or left empty otherwise.
+   Returns the number of children processed. */
+static void gen_concat_temps(CodeGen *cg, ASTNode **children, int count,
+                              char tmp_names[][32], int tmp_name_size)
+{
+    for (int i = 0; i < count && i < tmp_name_size; i++)
+    {
+        if (is_str_concat(children[i]))
+            gen_str_concat_temp(cg, children[i], tmp_names[i], 32);
+        else
+            tmp_names[i][0] = '\0';
+    }
+}
+
+/* Emits a comma-separated argument list using pre-generated temps where available. */
+static void gen_args(CodeGen *cg, ASTNode **children, int count,
+                     char tmp_names[][32], int tmp_name_size)
+{
+    for (int i = 0; i < count && i < tmp_name_size; i++)
+    {
+        if (i > 0)
+            buf_write(cg->buf, ", ");
+        if (tmp_names[i][0] != '\0')
+            buf_write(cg->buf, tmp_names[i]);
+        else
+            gen_expr(cg, children[i]);
+    }
 }
 
 /* Writes an expression inline to the buffer — no indentation, no newline.
@@ -231,14 +237,12 @@ static void gen_expr(CodeGen *cg, const ASTNode *node)
 
     case NODE_BINARY_OP:
     {
-        const char *op = node->value;
-        const char *c_op = op;
-        if (strcmp(op, "and") == 0)
-            c_op = "&&";
-        else if (strcmp(op, "or") == 0)
-            c_op = "||";
-        else if (strcmp(op, "//") == 0)
-            c_op = "/";
+        const char *op   = node->value;
+        const char *c_op = op; // most Python operators map directly to C
+
+        if (strcmp(op, "and") == 0)       c_op = "&&";
+        else if (strcmp(op, "or") == 0)   c_op = "||";
+        else if (strcmp(op, "//") == 0)   c_op = "/";
 
         if (strcmp(op, "**") == 0)
         {
@@ -282,6 +286,7 @@ static void gen_expr(CodeGen *cg, const ASTNode *node)
         break;
 
     default:
+        // fallback: emit the raw value token if present (e.g. unknown operator)
         if (node->value[0] != '\0')
             buf_write(cg->buf, node->value);
         break;
@@ -305,20 +310,24 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
     case NODE_ASSIGN:
     {
         const ASTNode *target = node->children_count > 0 ? node->children[0] : NULL;
-        const ASTNode *value = node->children_count > 1 ? node->children[1] : NULL;
+        const ASTNode *value  = node->children_count > 1 ? node->children[1] : NULL;
         if (!target)
             break;
+
+        SymbolEntry *entry          = symbol_table_lookup_local(cg->current_scope, target->value);
+        int          already_declared = entry && entry->declared_in_c;
 
         if (is_str_concat(value))
         {
             // string concat: declare as char[256] then snprintf into it
-            if (!decl_contains(cg->decl, target->value))
+            if (!already_declared)
             {
                 write_indent(cg);
                 buf_write(cg->buf, "char ");
                 buf_write(cg->buf, target->value);
                 buf_write(cg->buf, "[256];\n");
-                decl_mark(cg->decl, target->value);
+                if (entry)
+                    entry->declared_in_c = 1;
             }
             write_indent(cg);
             buf_write(cg->buf, "snprintf(");
@@ -332,16 +341,20 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
         else
         {
             write_indent(cg);
-            if (!decl_contains(cg->decl, target->value))
+            if (!already_declared)
             {
-                SemanticType t = (node->inferred_type != STYPE_UNKNOWN && node->inferred_type != STYPE_NONE)
+                // prefer the symbol table's type; fall back to the node's inferred type
+                SemanticType t = (entry && entry->type != STYPE_UNKNOWN && entry->type != STYPE_NONE)
+                                     ? entry->type
+                                 : (node->inferred_type != STYPE_UNKNOWN && node->inferred_type != STYPE_NONE)
                                      ? node->inferred_type
                                      : STYPE_INT;
                 buf_write(cg->buf, stype_to_c(t));
                 buf_write(cg->buf, " ");
                 buf_write(cg->buf, target->value);
                 buf_write(cg->buf, " = ");
-                decl_mark(cg->decl, target->value);
+                if (entry)
+                    entry->declared_in_c = 1;
             }
             else
             {
@@ -360,17 +373,14 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
     case NODE_ASSIGN_DIV:
     {
         const ASTNode *target = node->children_count > 0 ? node->children[0] : NULL;
-        const ASTNode *value = node->children_count > 1 ? node->children[1] : NULL;
+        const ASTNode *value  = node->children_count > 1 ? node->children[1] : NULL;
         if (!target)
             break;
 
-        const char *op = node->type == NODE_ASSIGN_PLUS ? "+=" : node->type == NODE_ASSIGN_MINUS ? "-="
-                                                             : node->type == NODE_ASSIGN_MULT    ? "*="
-                                                                                                 : "/=";
         write_indent(cg);
         buf_write(cg->buf, target->value);
         buf_write(cg->buf, " ");
-        buf_write(cg->buf, op);
+        buf_write(cg->buf, compound_op[node->type - NODE_ASSIGN_PLUS]);
         buf_write(cg->buf, " ");
         gen_expr(cg, value);
         buf_write(cg->buf, ";\n");
@@ -384,14 +394,20 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
         gen_expr(cg, node->children_count > 0 ? node->children[0] : NULL);
         buf_write(cg->buf, ") {\n");
         cg->indent++;
+        cg_scope_enter(cg);
         if (node->children_count > 1)
             gen_stmt(cg, node->children[1]);
+        cg_scope_exit(cg);
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}");
-        // elif/else nodes are extra children of if, emitted inline
+        // elif/else siblings are extra children; each gets the wrapper scope the IF pushed for it
         for (int i = 2; i < node->children_count; i++)
+        {
+            cg_scope_enter(cg);
             gen_stmt(cg, node->children[i]);
+            cg_scope_exit(cg);
+        }
         buf_write(cg->buf, "\n");
         break;
     }
@@ -402,13 +418,19 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
         gen_expr(cg, node->children_count > 0 ? node->children[0] : NULL);
         buf_write(cg->buf, ") {\n");
         cg->indent++;
+        cg_scope_enter(cg);
         if (node->children_count > 1)
             gen_stmt(cg, node->children[1]);
+        cg_scope_exit(cg);
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}");
         for (int i = 2; i < node->children_count; i++)
+        {
+            cg_scope_enter(cg);
             gen_stmt(cg, node->children[i]);
+            cg_scope_exit(cg);
+        }
         break;
     }
 
@@ -416,8 +438,10 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
     {
         buf_write(cg->buf, " else {\n");
         cg->indent++;
+        cg_scope_enter(cg);
         for (int i = 0; i < node->children_count; i++)
             gen_stmt(cg, node->children[i]);
+        cg_scope_exit(cg);
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}");
@@ -431,8 +455,10 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
         gen_expr(cg, node->children_count > 0 ? node->children[0] : NULL);
         buf_write(cg->buf, ") {\n");
         cg->indent++;
+        cg_scope_enter(cg);
         if (node->children_count > 1)
             gen_stmt(cg, node->children[1]);
+        cg_scope_exit(cg);
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}\n");
@@ -442,10 +468,10 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
     case NODE_FOR:
     {
         // child[0]=loop var, child[1]=NODE_RANGE, child[2]=body
-        const ASTNode *var = node->children_count > 0 ? node->children[0] : NULL;
+        const ASTNode *var   = node->children_count > 0 ? node->children[0] : NULL;
         const ASTNode *range = node->children_count > 1 ? node->children[1] : NULL;
-        const ASTNode *body = node->children_count > 2 ? node->children[2] : NULL;
-        const char *vname = var ? var->value : "_i";
+        const ASTNode *body  = node->children_count > 2 ? node->children[2] : NULL;
+        const char    *vname = var ? var->value : "_i";
 
         write_indent(cg);
         buf_write(cg->buf, "for (int ");
@@ -458,7 +484,9 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
         buf_write(cg->buf, vname);
         buf_write(cg->buf, "++) {\n");
         cg->indent++;
+        cg_scope_enter(cg);
         gen_stmt(cg, body);
+        cg_scope_exit(cg);
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}\n");
@@ -473,32 +501,19 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
             buf_write(cg->buf, "printf(\"\\n\");\n");
             break;
         }
-        // pre-generate temp buffers for any string concat args
         char tmp_names[64][32];
-        for (int i = 0; i < node->children_count && i < 64; i++)
-        {
-            if (is_str_concat(node->children[i]))
-                gen_str_concat_temp(cg, node->children[i], tmp_names[i], 32);
-            else
-                tmp_names[i][0] = '\0';
-        }
+        gen_concat_temps(cg, node->children, node->children_count, tmp_names, 64);
         write_indent(cg);
         buf_write(cg->buf, "printf(\"");
         for (int i = 0; i < node->children_count; i++)
         {
             if (i > 0)
                 buf_write(cg->buf, " ");
-            buf_write(cg->buf, stype_to_fmt(node->children[i]->inferred_type));
+            buf_write(cg->buf, stype_to_fmt(get_type(cg, node->children[i])));
         }
         buf_write(cg->buf, "\\n\"");
-        for (int i = 0; i < node->children_count && i < 64; i++)
-        {
-            buf_write(cg->buf, ", ");
-            if (tmp_names[i][0] != '\0')
-                buf_write(cg->buf, tmp_names[i]);
-            else
-                gen_expr(cg, node->children[i]);
-        }
+        buf_write(cg->buf, ", ");
+        gen_args(cg, node->children, node->children_count, tmp_names, 64);
         buf_write(cg->buf, ");\n");
         break;
     }
@@ -506,38 +521,38 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
     case NODE_DEF:
     {
         // child[0]=param list, child[1]=body block
-        SemanticType ret = node->inferred_type;
+        // return type lives in the current (outer) scope under the function's name
+        SymbolEntry *fn_entry = symbol_table_lookup_local(cg->current_scope, node->value);
+        SemanticType  ret     = fn_entry ? fn_entry->type : STYPE_INT;
         buf_write(cg->buf, stype_to_c(ret != STYPE_UNKNOWN ? ret : STYPE_INT));
         buf_write(cg->buf, " ");
         buf_write(cg->buf, node->value);
         buf_write(cg->buf, "(");
 
-        if (node->children_count > 0 &&
-            node->children[0]->type == NODE_PARAM_LIST)
+        // enter function scope now so param lookups hit the right scope
+        cg_scope_enter(cg);
+
+        if (node->children_count > 0 && node->children[0]->type == NODE_PARAM_LIST)
         {
             const ASTNode *params = node->children[0];
             for (int i = 0; i < params->children_count; i++)
             {
                 if (i > 0)
                     buf_write(cg->buf, ", ");
-                SemanticType pt = params->children[i]->inferred_type;
-                buf_write(cg->buf, stype_to_c(pt != STYPE_UNKNOWN ? pt : STYPE_INT));
+                SymbolEntry *pe = symbol_table_lookup_local(cg->current_scope, params->children[i]->value);
+                SemanticType pt = (pe && pe->type != STYPE_UNKNOWN) ? pe->type : STYPE_INT;
+                buf_write(cg->buf, stype_to_c(pt));
                 buf_write(cg->buf, " ");
                 buf_write(cg->buf, params->children[i]->value);
             }
         }
         buf_write(cg->buf, ")\n{\n");
 
-        // push a fresh declaration scope for the function body
-        DeclTable fn_decl;
-        DeclTable *saved = cg->decl;
-        decl_init(&fn_decl);
-        cg->decl = &fn_decl;
         cg->indent++;
         if (node->children_count > 1)
             gen_stmt(cg, node->children[1]);
         cg->indent--;
-        cg->decl = saved;
+        cg_scope_exit(cg);
         buf_write(cg->buf, "}\n\n");
         break;
     }
@@ -568,27 +583,12 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
 
     case NODE_FUNCTION_CALL:
     {
-        // pre-generate temp buffers for any string concat args
         char tmp_names[64][32];
-        for (int i = 0; i < node->children_count && i < 64; i++)
-        {
-            if (is_str_concat(node->children[i]))
-                gen_str_concat_temp(cg, node->children[i], tmp_names[i], 32);
-            else
-                tmp_names[i][0] = '\0';
-        }
+        gen_concat_temps(cg, node->children, node->children_count, tmp_names, 64);
         write_indent(cg);
         buf_write(cg->buf, node->value);
         buf_write(cg->buf, "(");
-        for (int i = 0; i < node->children_count && i < 64; i++)
-        {
-            if (i > 0)
-                buf_write(cg->buf, ", ");
-            if (tmp_names[i][0] != '\0')
-                buf_write(cg->buf, tmp_names[i]);
-            else
-                gen_expr(cg, node->children[i]);
-        }
+        gen_args(cg, node->children, node->children_count, tmp_names, 64);
         buf_write(cg->buf, ");\n");
         break;
     }
@@ -603,8 +603,10 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
 
 /* Walks the typed AST and produces a complete C source file as a heap-allocated string.
    Function definitions are written to a separate buffer so they appear before main().
+   A single CodeGen with one current_scope cursor is used so scope navigation order
+   matches the semantic analyzer's traversal order exactly.
    Caller must free the returned string. Returns NULL on allocation failure. */
-char *generate_code(const ASTNode *root, ErrorList *errors)
+char *generate_code(const ASTNode *root, SymbolTable *global_scope, ErrorList *errors)
 {
     if (!root)
         return NULL;
@@ -617,11 +619,14 @@ char *generate_code(const ASTNode *root, ErrorList *errors)
         return NULL;
     }
 
-    DeclTable main_decl;
-    decl_init(&main_decl);
-
-    CodeGen fn_cg = {&fn_buf, &main_decl, 0, 0, errors};
-    CodeGen main_cg = {&main_buf, &main_decl, 1, 0, errors};
+    // Single CodeGen — fn_buf and main_buf share one scope cursor so next_child
+    // advances in AST order regardless of which buffer is active.
+    CodeGen cg;
+    cg.current_scope = global_scope;
+    cg.indent        = 1;
+    cg.tmp_counter   = 0;
+    cg.errors        = errors;
+    cg.buf           = &main_buf;
 
     if (root->type == NODE_PROGRAM)
     {
@@ -629,9 +634,16 @@ char *generate_code(const ASTNode *root, ErrorList *errors)
         {
             ASTNode *child = root->children[i];
             if (child && child->type == NODE_DEF)
-                gen_stmt(&fn_cg, child);
+            {
+                cg.buf    = &fn_buf;
+                cg.indent = 0;
+            }
             else
-                gen_stmt(&main_cg, child);
+            {
+                cg.buf    = &main_buf;
+                cg.indent = 1;
+            }
+            gen_stmt(&cg, child);
         }
     }
 

@@ -181,14 +181,14 @@ static ASTNode *run_parser(const TokenList *token_list, ErrorList *errors)
     return parse_program(&parser);
 }
 
-static ASTNode *run_semantic_analyzer(ASTNode *ast, ErrorList *errors)
+static ASTNode *run_semantic_analyzer(ASTNode *ast, ErrorList *errors, SymbolTable **out_scope)
 {
-    return semantic_analyze(ast, errors);
+    return semantic_analyze(ast, errors, out_scope);
 }
 
-static char *run_code_generator(ASTNode *typed_ast, ErrorList *errors)
+static char *run_code_generator(ASTNode *typed_ast, SymbolTable *global_scope, ErrorList *errors)
 {
-    return generate_code(typed_ast, errors);
+    return generate_code(typed_ast, global_scope, errors);
 }
 
 /* Runs the full compiler pipeline on source and writes C output to output_file.
@@ -243,14 +243,15 @@ int compile(const char *source, const char *output_file)
     printf("-----------\n\n");
 
     // stage 3: semantic analysis
-    ASTNode *typed_ast = run_semantic_analyzer(ast, &errors);
+    SymbolTable *global_scope = NULL;
+    ASTNode *typed_ast = run_semantic_analyzer(ast, &errors, &global_scope);
 
     printf("\n--- typed AST ---\n");
     print_ast(typed_ast);
     printf("-----------\n\n");
 
     // stage 4: code generation
-    char *c_code = run_code_generator(typed_ast, &errors);
+    char *c_code = run_code_generator(typed_ast, global_scope, &errors);
 
     FILE *out = fopen(output_file, "w");
     if (!out)
@@ -264,6 +265,7 @@ int compile(const char *source, const char *output_file)
         fclose(out);
     }
     free(c_code);
+    symbol_table_free_tree(global_scope);
 
     error_list_write_log(&errors);
 

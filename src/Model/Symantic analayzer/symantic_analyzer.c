@@ -59,8 +59,15 @@ static int symbol_table_lookup(const SymbolTable *table, const char *name, Seman
 static void symbol_table_init(SymbolTable *table, SymbolTable *parent)
 {
     for (int i = 0; i < SYMBOL_TABLE_SIZE; i++)
+    {
         table->entries[i].occupied = 0;
+        table->entries[i].declared_in_c = 0;
+    }
     table->parent = parent;
+    table->child_count = 0;
+    table->next_child = 0;
+    for (int i = 0; i < MAX_CHILD_SCOPES; i++)
+        table->children[i] = NULL;
 }
 
 /* int+float → float. UNKNOWN on either side means we don't know yet, so trust the other side. */
@@ -114,19 +121,12 @@ static void refine_identifier_type(SemanticAnalyzer *sa, const ASTNode *node, Se
     SymbolTable *table = sa->current;
     while (table)
     {
-        unsigned int index = symbol_hash(node->value) & (SYMBOL_TABLE_SIZE - 1);
-        int probes = 0;
-        while (table->entries[index].occupied && probes < SYMBOL_TABLE_SIZE)
+        SymbolEntry *e = symbol_table_lookup_local(table, node->value);
+        if (e)
         {
-            if (strcmp(table->entries[index].name, node->value) == 0)
-            {
-                // only refine if still at the default (STYPE_INT); first evidence wins
-                if (table->entries[index].type == STYPE_INT)
-                    table->entries[index].type = new_type;
-                return;
-            }
-            index = (index + 1) & (SYMBOL_TABLE_SIZE - 1);
-            probes++;
+            if (e->type == STYPE_INT) // only refine from the default; first evidence wins
+                e->type = new_type;
+            return;
         }
         table = table->parent;
     }
@@ -169,8 +169,7 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
         if (!symbol_table_lookup(sa->current, node->value, &found_type))
             error_list_add_staged(sa->errors, "Use of undeclared variable",
                                   node->line, node->column, STAGE_SEMANTIC);
-        result = found_type;
-        break;
+        return found_type; // symbol table is the authority — don't write to node->inferred_type
     }
 
     case NODE_BINARY_OP:
@@ -247,8 +246,7 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
         symbol_table_lookup(sa->current, node->value, &fn_type);
         for (int i = 0; i < node->children_count; i++)
             infer_type(sa, node->children[i]);
-        result = fn_type;
-        break;
+        return fn_type; // symbol table is the authority — don't write to node->inferred_type
     }
 
     default:
@@ -261,24 +259,50 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
 }
 
 // Scope management — each block/function gets its own heap-allocated scope.
+// Scopes are NOT freed on pop; the code generator needs the full tree after analysis.
 static SymbolTable *push_scope(SemanticAnalyzer *sa)
 {
     SymbolTable *child = malloc(sizeof(SymbolTable));
     if (!child)
         return sa->current;
     symbol_table_init(child, sa->current);
+    if (sa->current->child_count < MAX_CHILD_SCOPES)
+        sa->current->children[sa->current->child_count++] = child;
     sa->current = child;
     return child;
 }
 
 static void pop_scope(SemanticAnalyzer *sa)
 {
-    SymbolTable *child = sa->current;
-    if (child && child->parent)
+    if (sa->current && sa->current->parent)
+        sa->current = sa->current->parent;
+}
+
+/* Looks up name in this scope only — does NOT walk the parent chain. */
+SymbolEntry *symbol_table_lookup_local(SymbolTable *table, const char *name)
+{
+    if (!table)
+        return NULL;
+    unsigned int index = symbol_hash(name) & (SYMBOL_TABLE_SIZE - 1);
+    int probes = 0;
+    while (table->entries[index].occupied && probes < SYMBOL_TABLE_SIZE)
     {
-        sa->current = child->parent;
-        free(child);
+        if (strcmp(table->entries[index].name, name) == 0)
+            return &table->entries[index];
+        index = (index + 1) & (SYMBOL_TABLE_SIZE - 1);
+        probes++;
     }
+    return NULL;
+}
+
+/* Recursively frees a scope tree. Call after code generation is done. */
+void symbol_table_free_tree(SymbolTable *table)
+{
+    if (!table)
+        return;
+    for (int i = 0; i < table->child_count; i++)
+        symbol_table_free_tree(table->children[i]);
+    free(table);
 }
 
 /* Handles statement-level nodes — binds variables, opens/closes scopes, checks conditions.
@@ -291,9 +315,7 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
     switch (node->type)
     {
     case NODE_IDENTIFIER:
-        if (strcmp(node->value, "<error>") == 0)
-            return;
-        break;
+        return; // expression analysis is in infer_type; error placeholder nodes are silently skipped
 
     case NODE_ASSIGN:
     case NODE_ASSIGN_PLUS:
@@ -311,12 +333,8 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
                                   node->line, node->column, STAGE_SEMANTIC);
 
         if (target && target->type == NODE_IDENTIFIER)
-        {
             symbol_table_set(sa->current, target->value, vtype);
-            target->inferred_type = vtype;
-        }
 
-        node->inferred_type = vtype;
         return;
     }
 
@@ -353,10 +371,7 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
     {
         // loop variable is always int (range index)
         if (node->children_count > 0 && node->children[0])
-        {
             symbol_table_set(sa->current, node->children[0]->value, STYPE_INT);
-            node->children[0]->inferred_type = STYPE_INT;
-        }
         if (node->children_count > 1)
             infer_type(sa, node->children[1]);
 
@@ -369,10 +384,7 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
 
     case NODE_PRINT:
         for (int i = 0; i < node->children_count; i++)
-        {
-            SemanticType at = infer_type(sa, node->children[i]);
-            node->children[i]->inferred_type = at;
-        }
+            infer_type(sa, node->children[i]);
         return;
 
     case NODE_DEF:
@@ -396,33 +408,14 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
             {
                 ASTNode *p = params->children[i];
                 if (p && p->type == NODE_IDENTIFIER)
-                {
                     symbol_table_set(sa->current, p->value, STYPE_INT);
-                    p->inferred_type = STYPE_INT;
-                }
             }
         }
 
         if (node->children_count > 1)
             analyze_node(sa, node->children[1]);
 
-        // read back refined param types after body analysis
-        if (params)
-        {
-            for (int i = 0; i < params->children_count; i++)
-            {
-                ASTNode *p = params->children[i];
-                if (p && p->type == NODE_IDENTIFIER)
-                {
-                    SemanticType refined = STYPE_INT;
-                    symbol_table_lookup(sa->current, p->value, &refined);
-                    p->inferred_type = refined;
-                }
-            }
-        }
-
         SemanticType final_ret = sa->current_fn_return; // STYPE_NONE if no return statement
-        node->inferred_type = final_ret;
         sa->current_fn_return = saved_return;
 
         pop_scope(sa);
@@ -435,7 +428,6 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
         if (node->children_count > 0)
         {
             SemanticType rt = infer_type(sa, node->children[0]);
-            node->inferred_type = rt;
             sa->current_fn_return = promote_return(sa->current_fn_return, rt);
             if (sa->current_fn_return == STYPE_UNKNOWN)
                 error_list_add_staged(sa->errors, "Function has inconsistent return types",
@@ -463,8 +455,9 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
 }
 
 /* Entry point. Initializes the global scope and walks the program top-down.
-   Returns the same root pointer with inferred_type filled in on every node. */
-ASTNode *semantic_analyze(ASTNode *root, ErrorList *errors)
+   Returns the same root pointer with inferred_type filled in on every node.
+   Writes the heap-allocated global scope to *out_scope; caller must free it with symbol_table_free_tree. */
+ASTNode *semantic_analyze(ASTNode *root, ErrorList *errors, SymbolTable **out_scope)
 {
     if (!root)
         return NULL;
@@ -472,8 +465,16 @@ ASTNode *semantic_analyze(ASTNode *root, ErrorList *errors)
     SemanticAnalyzer sa;
     sa.errors = errors;
     sa.current_fn_return = STYPE_NONE;
-    symbol_table_init(&sa.global, NULL);
-    sa.current = &sa.global;
+
+    // initialize global scope
+    sa.global = malloc(sizeof(SymbolTable));
+    if (!sa.global)
+    {
+        error_list_add_staged(errors, "Memory allocation failed for global scope", 0, 0, STAGE_SEMANTIC);
+        return NULL;
+    }
+    symbol_table_init(sa.global, NULL);
+    sa.current = sa.global;
 
     if (root->type == NODE_PROGRAM)
     {
@@ -484,6 +485,9 @@ ASTNode *semantic_analyze(ASTNode *root, ErrorList *errors)
     {
         analyze_node(&sa, root);
     }
+    
+    if (out_scope)
+        *out_scope = sa.global;
 
     return root;
 }

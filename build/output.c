@@ -11,14 +11,14 @@ int scale(int value, int factor)
     return (value * factor);
 }
 
-const char *greet(const char *name)
+const char * greet(const char * name)
 {
     char msg[256];
     snprintf(msg, 256, "%s%s", "Hello, ", name);
     return msg;
 }
 
-void print_line(const char *label, int count)
+void print_line(const char * label, int count)
 {
     char result[256];
     snprintf(result, 256, "%s%s", label, " count");
@@ -28,12 +28,9 @@ void print_line(const char *label, int count)
 
 int absolute(int n)
 {
-    if ((n < 0))
-    {
+    if ((n < 0)) {
         return (n * -(1));
-    }
-    else
-    {
+    } else {
         return n;
     }
 }
@@ -54,7 +51,7 @@ int main(void)
     char greeting[256];
     snprintf(greeting, 256, "%s%s", "Hello, ", "world");
     printf("%s\n", greeting);
-    const char *name = "Alice";
+    const char * name = "Alice";
     char __tmp_0[256];
     snprintf(__tmp_0, 256, "%s%s", "Welcome, ", name);
     printf("%s\n", __tmp_0);
@@ -66,44 +63,32 @@ int main(void)
     printf("%d\n", counter);
     int flag = 1;
     int other = 0;
-    if ((flag && !(other)))
-    {
+    if ((flag && !(other))) {
         printf("%d\n", 1);
     }
     int score = 85;
-    if ((score >= 90))
-    {
+    if ((score >= 90)) {
         printf("%d\n", 4);
-    }
-    else if ((score >= 80))
-    {
+    } else if ((score >= 80)) {
         printf("%d\n", 3);
-    }
-    else if ((score >= 70))
-    {
+    } else if ((score >= 70)) {
         printf("%d\n", 2);
-    }
-    else
-    {
+    } else {
         printf("%d\n", 1);
     }
     int i = 0;
-    while ((i < 10))
-    {
-        if ((i == 3))
-        {
+    while ((i < 10)) {
+        if ((i == 3)) {
             i += 1;
             continue;
         }
-        if ((i == 7))
-        {
+        if ((i == 7)) {
             break;
         }
         i += 1;
     }
     int total = 0;
-    for (int i = 0; i < 5; i++)
-    {
+    for (int i = 0; i < 5; i++) {
         total += i;
     }
     printf("%d\n", total);
