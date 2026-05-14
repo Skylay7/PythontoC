@@ -103,6 +103,7 @@ static SemanticType promote_return(SemanticType a, SemanticType b)
     return STYPE_UNKNOWN; // conflict
 }
 
+// Returns 1 if the type is valid in a condition context (if/while).
 static int is_condition_type(SemanticType t)
 {
     return t == STYPE_BOOL || t == STYPE_INT || t == STYPE_FLOAT;
@@ -147,6 +148,7 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
 
     switch (node->type)
     {
+    // literals have an inherent type that doesn't come from the symbol table
     case NODE_INT_LITERAL:
         result = STYPE_INT;
         break;
@@ -163,13 +165,15 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
         result = STYPE_NONE;
         break;
 
+    // identifiers and function calls get their type from the symbol table
+    // if not found, it's an error but we return UNKNOWN to avoid spamming more errors downstream
     case NODE_IDENTIFIER:
     {
         SemanticType found_type = STYPE_UNKNOWN;
         if (!symbol_table_lookup(sa->current, node->value, &found_type))
             error_list_add_staged(sa->errors, "Use of undeclared variable",
                                   node->line, node->column, STAGE_SEMANTIC);
-        return found_type; // symbol table is the authority — don't write to node->inferred_type
+        return found_type; // symbol table is the authority , don't write to node->inferred_type
     }
 
     case NODE_BINARY_OP:
@@ -390,13 +394,22 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
 
     case NODE_DEF:
     {
+        if (sa->current != sa->global)
+        {
+            // nested functions are not supported in this simple implementation
+            error_list_add_staged(sa->errors, "Nested functions are not supported",
+                                  node->line, node->column, STAGE_SEMANTIC);
+            return;
+        }
         // register as STYPE_UNKNOWN initially; updated to actual return type after body analysis
         symbol_table_set(sa->current, node->value, STYPE_UNKNOWN);
         push_scope(sa);
 
+        // save and reset return type tracking for this function scope
         SemanticType saved_return = sa->current_fn_return;
         sa->current_fn_return = STYPE_NONE;
 
+        // params don't have an explicit type, but we can refine them based on usage in the body
         ASTNode *params = (node->children_count > 0 &&
                            node->children[0]->type == NODE_PARAM_LIST)
                               ? node->children[0]
@@ -413,9 +426,12 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
             }
         }
 
+        // analyze body with the new scope and reset return type tracking
         if (node->children_count > 1)
             analyze_node(sa, node->children[1]);
 
+        // if the function has no return statements, its return type is None
+        // otherwise it's the promoted type of all returns
         SemanticType final_ret = sa->current_fn_return; // STYPE_NONE if no return statement
         sa->current_fn_return = saved_return;
 

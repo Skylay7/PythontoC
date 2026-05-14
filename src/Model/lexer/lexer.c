@@ -468,7 +468,8 @@ Token lexer_next_token(Lexer *lexer)
         }
         return make_token(TOKEN_EOF, "", lexer->line, lexer->column);
     }
-
+    
+    // handle newlines and indentation at the start of logical lines
     if (current_char(lexer) == '\n')
     {
         int start_line = lexer->line;
@@ -477,7 +478,7 @@ Token lexer_next_token(Lexer *lexer)
         lexer->at_line_start = 1;
         return make_token(TOKEN_NEWLINE, "\\n", start_line, start_col);
     }
-
+    
     if (current_char(lexer) == '\t') // tab outside of indentation position
     {
         int start_line = lexer->line;
@@ -487,6 +488,7 @@ Token lexer_next_token(Lexer *lexer)
         return make_token(TOKEN_ERROR, "\t", start_line, start_col);
     }
 
+    // handle indentation if we're at the start of a logical line
     if (lexer->at_line_start)
     {
         lexer->at_line_start = 0;

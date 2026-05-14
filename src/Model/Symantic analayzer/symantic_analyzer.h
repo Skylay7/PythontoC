@@ -10,29 +10,32 @@
 #define MAX_SYMBOL_NAME 256
 #define MAX_CHILD_SCOPES 64
 
+/* One variable or function recorded in a scope. */
 typedef struct SymbolEntry
 {
-    char name[MAX_SYMBOL_NAME];
-    SemanticType type;
-    int occupied;
-    int declared_in_c; // set by code generator on first C declaration
+    char name[MAX_SYMBOL_NAME]; /* identifier text */
+    SemanticType type;          /* resolved type */
+    int occupied;               /* 1 if this hash slot is in use */
+    int declared_in_c;          /* set by code generator on first C declaration */
 } SymbolEntry;
 
+/* A lexical scope — forms a tree mirroring the Python block structure. */
 typedef struct SymbolTable
 {
-    SymbolEntry entries[SYMBOL_TABLE_SIZE];
-    struct SymbolTable *parent;                     // NULL at global scope
-    struct SymbolTable *children[MAX_CHILD_SCOPES]; // child scopes in creation order
-    int child_count;
-    int next_child; // traversal cursor for the code generator
+    SymbolEntry entries[SYMBOL_TABLE_SIZE];         /* open-addressed hash table of symbols */
+    struct SymbolTable *parent;                     /* enclosing scope; NULL at global scope */
+    struct SymbolTable *children[MAX_CHILD_SCOPES]; /* child scopes in creation order */
+    int child_count;                                /* number of child scopes created */
+    int next_child;                                 /* traversal cursor for the code generator */
 } SymbolTable;
 
+/* Transient state threaded through the semantic analysis walk. */
 typedef struct
 {
-    SymbolTable *current; // innermost active scope
-    SymbolTable *global;  // heap-allocated root scope
-    ErrorList *errors;
-    SemanticType current_fn_return; // accumulates return type of function being analyzed
+    SymbolTable *current;           /* innermost active scope */
+    SymbolTable *global;            /* heap-allocated root scope */
+    ErrorList *errors;              /* shared error list; not owned */
+    SemanticType current_fn_return; /* accumulates return type of the function being analysed */
 } SemanticAnalyzer;
 
 /* Walks the AST, infers types on every node, and checks scopes.

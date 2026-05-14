@@ -3,7 +3,7 @@
 #include "parser.h"
 #include <string.h>
 
-// Token position helpers — thin wrappers so parse functions don't touch the array directly.
+// Token position helpers - thin wrappers so parse functions don't touch the array directly.
 
 static const Token *current_token(const Parser *parser)
 {
@@ -60,7 +60,7 @@ static TokenType peek_next_type(const Parser *parser)
     return parser->tokens[parser->position + 1].type;
 }
 
-// Forward declarations — parse_statement and parse_expression call each other.
+// Forward declarations - parse_statement and parse_expression call each other.
 static ASTNode *parse_statement(Parser *parser);
 static ASTNode *parse_expression(Parser *parser);
 static ASTNode *parse_block(Parser *parser);
@@ -93,7 +93,7 @@ static ASTNode *parse_function_call(Parser *parser)
     return node;
 }
 
-// Expression parser — shunting-yard algorithm.
+// Expression parser - shunting-yard algorithm.
 
 #define EXPR_STACK_MAX 64
 
@@ -119,7 +119,7 @@ static const OpInfo op_info[TOKEN_COUNT] = {
     // sign, precedence, is_binary, is_right_assoc
     [TOKEN_OR] = {"or", 1, 1, 0},
     [TOKEN_AND] = {"and", 2, 1, 0},
-    [TOKEN_NOT] = {"not", 3, 0, 0}, // unary — not binary
+    [TOKEN_NOT] = {"not", 3, 0, 0}, // unary - not binary
     [TOKEN_EQ] = {"==", 4, 1, 0},
     [TOKEN_NEQ] = {"!=", 4, 1, 0},
     [TOKEN_LT] = {"<", 4, 1, 0},
@@ -254,7 +254,7 @@ static ASTNode *parse_expression(Parser *parser)
             }
             else if (type == TOKEN_LPAREN)
             {
-                // parenthesised sub-expression — recurse
+                // parenthesised sub-expression - recurse
                 advance(parser);
                 ASTNode *inner = parse_expression(parser);
                 expect(parser, TOKEN_RPAREN, "Expected ')'");
@@ -264,7 +264,7 @@ static ASTNode *parse_expression(Parser *parser)
             }
             else if (type == TOKEN_NOT || type == TOKEN_MINUS)
             {
-                // unary operator — push on operator stack, stay in operand mode
+                // unary operator - push on operator stack, stay in operand mode
                 OpEntry op;
                 op.type = type;
                 op.is_unary = 1;
@@ -402,7 +402,7 @@ static ASTNode *parse_block(Parser *parser)
     return block;
 }
 
-// Statement parsers — one function per statement type.
+// Statement parsers - one function per statement type.
 
 // IF [ELIF]* [ELSE]
 static ASTNode *parse_if(Parser *parser)
@@ -527,7 +527,7 @@ static ASTNode *parse_for(Parser *parser)
 
     expect(parser, TOKEN_IN, "Expected 'in' after loop variable");
 
-    // child[1]: range node — only range(...) is allowed
+    // child[1]: range node - only range(...) is allowed
     ASTNode *iter = parse_for_iterable(parser);
     if (iter)
         ast_node_add_child(node, iter);
@@ -558,6 +558,7 @@ static ASTNode *parse_def(Parser *parser)
 
     ASTNode *params = ast_node_create(NODE_PARAM_LIST, "", t->line, t->column);
 
+    // parse parameters - just a comma-separated list of identifiers for now, no defaults or annotations
     if (!check(parser, TOKEN_RPAREN))
     {
         const Token *p = expect(parser, TOKEN_IDENTIFIER, "Expected parameter name");
@@ -685,7 +686,7 @@ static ASTNode *parse_assign(Parser *parser)
     }
     else if (check(parser, TOKEN_LPAREN))
     {
-        // bare function call as a statement — step back so parse_function_call can consume the name
+        // bare function call as a statement - step back so parse_function_call can consume the name
         parser->position--;
         ASTNode *call = parse_function_call(parser);
         match(parser, TOKEN_NEWLINE);
@@ -693,7 +694,7 @@ static ASTNode *parse_assign(Parser *parser)
     }
     else
     {
-        // bare identifier with no assignment operator — not a valid statement here
+        // bare identifier with no assignment operator - not a valid statement here
         error_list_add_staged(parser->errors, "Expected assignment operator",
                               id->line, id->column, STAGE_PARSER);
         match(parser, TOKEN_NEWLINE);
@@ -712,7 +713,7 @@ static ASTNode *parse_assign(Parser *parser)
     return node;
 }
 
-// Dispatch hash table — maps TokenType → parse function using open-address hashing.
+// Dispatch hash table - maps TokenType → parse function using open-address hashing.
 
 static void dispatch_register(DispatchTable *dt, TokenType key, ParseFn fn)
 {
@@ -772,7 +773,7 @@ static ASTNode *parse_statement(Parser *parser)
     if (fn)
         return fn(parser);
 
-    // no handler — wrap in error node and skip the line
+    // no handler - wrap in error node and skip the line
     const Token *t = current_token(parser);
     error_list_add_staged(parser->errors, "Invalid syntax", t->line, t->column, STAGE_PARSER);
     advance(parser);
