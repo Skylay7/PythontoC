@@ -3,7 +3,7 @@
 #ifndef ERRORS_H
 #define ERRORS_H
 
-#define MAX_ERRORS    256
+#define MAX_ERRORS 256
 #define MAX_ERROR_MSG 256
 
 /* Which compiler phase produced the error. */
@@ -19,17 +19,17 @@ typedef enum
 /* A single diagnostic with location and phase information. */
 typedef struct
 {
-    char         message[MAX_ERROR_MSG]; /* human-readable description */
-    int          line;                   /* 1-based source line */
-    int          column;                 /* 1-based source column */
-    CompileStage stage;                  /* phase that raised this error */
+    char message[MAX_ERROR_MSG]; /* human-readable description */
+    int line;                    /* 1-based source line */
+    int column;                  /* 1-based source column */
+    CompileStage stage;          /* phase that raised this error */
 } CompileError;
 
 /* Bounded collection of diagnostics accumulated during compilation. */
 typedef struct
 {
     CompileError errors[MAX_ERRORS]; /* fixed-size error buffer */
-    int          count;              /* number of errors stored so far */
+    int count;                       /* number of errors stored so far */
 } ErrorList;
 
 void error_list_init(ErrorList *list);

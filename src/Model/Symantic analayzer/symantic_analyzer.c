@@ -252,7 +252,8 @@ static SemanticType infer_type(SemanticAnalyzer *sa, ASTNode *node)
         symbol_table_lookup(sa->current, node->value, &fn_type);
         for (int i = 0; i < node->children_count; i++)
             infer_type(sa, node->children[i]);
-        return fn_type; // symbol table is the authority — don't write to node->inferred_type
+        node->inferred_type = fn_type;
+        return fn_type;
     }
 
     default:
