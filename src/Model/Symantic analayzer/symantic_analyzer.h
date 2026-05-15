@@ -17,6 +17,7 @@ typedef struct SymbolEntry
     SemanticType type;          /* resolved type */
     int occupied;               /* 1 if this hash slot is in use */
     int declared_in_c;          /* set by code generator on first C declaration */
+    int explicitly_assigned;    /* 1 if a NODE_ASSIGN has written this variable at least once */
 } SymbolEntry;
 
 /* A lexical scope — forms a tree mirroring the Python block structure. */

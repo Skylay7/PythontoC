@@ -62,6 +62,7 @@ static void symbol_table_init(SymbolTable *table, SymbolTable *parent)
     {
         table->entries[i].occupied = 0;
         table->entries[i].declared_in_c = 0;
+        table->entries[i].explicitly_assigned = 0;
     }
     table->parent = parent;
     table->child_count = 0;
@@ -337,8 +338,36 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
             error_list_add_staged(sa->errors, "Type mismatch in assignment expression",
                                   node->line, node->column, STAGE_SEMANTIC);
 
+        // if the target is an identifier, bind it in the symbol table or check for type consistency if already declared
         if (target && target->type == NODE_IDENTIFIER)
-            symbol_table_set(sa->current, target->value, vtype);
+        {
+            SymbolEntry *entry = NULL;
+            SymbolTable *scope = sa->current;
+            // look up the variable in the scope chain to see if it already exists and has an observed type from a previous assignment
+            while (scope)
+            {
+                entry = symbol_table_lookup_local(scope, target->value);
+                if (entry)
+                    break;
+                scope = scope->parent;
+            }
+
+            /* only block if the variable was previously set by explicit user code,
+               not just defaulted (a parameter defaulted to int). */
+            if (entry && entry->explicitly_assigned && entry->type != vtype)
+            {
+                error_list_add_staged(sa->errors, "Variable type changed after first assignment",
+                                      node->line, node->column, STAGE_SEMANTIC);
+            }
+            else
+            {
+                symbol_table_set(sa->current, target->value, vtype);
+                // mark the slot as explicitly assigned so future reassignments are checked for type consistency
+                SymbolEntry *written = symbol_table_lookup_local(sa->current, target->value);
+                if (written)
+                    written->explicitly_assigned = 1;
+            }
+        }
 
         return;
     }
