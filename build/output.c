@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <math.h>
 
-void say_hello(const char *person)
+void say_hello(const char * person)
 {
     char msg[256];
     snprintf(msg, 256, "%s%s", "Hello, ", person);
@@ -18,7 +18,7 @@ double scale(double value)
     return (value * 2.0);
 }
 
-const char *make_label(const char *prefix)
+const char * make_label(const char * prefix)
 {
     char result[256];
     snprintf(result, 256, "%s%s", "label: ", prefix);
@@ -27,12 +27,9 @@ const char *make_label(const char *prefix)
 
 int absolute(int n)
 {
-    if ((n < 0))
-    {
+    if ((n < 0)) {
         return (n * -(1));
-    }
-    else
-    {
+    } else {
         return n;
     }
 }
@@ -42,7 +39,7 @@ double double_float(double x)
     return (x * 2.0);
 }
 
-const char *wrap(const char *text)
+const char * wrap(const char * text)
 {
     char result[256];
     snprintf(result, 256, "%s%s", "[", text);
@@ -69,7 +66,7 @@ int main(void)
 {
     int a = 1;
     double b = 2.5;
-    const char *c = "hello";
+    const char * c = "hello";
     int d = 1;
     int e = 0;
     int sum_int = (a + 10);
@@ -97,7 +94,7 @@ int main(void)
     snprintf(greeting, 256, "%s%s", "Hello, ", "world");
     char label[256];
     snprintf(label, 256, "%s%s", "value: ", "42");
-    const char *name = "Alice";
+    const char * name = "Alice";
     char msg[256];
     snprintf(msg, 256, "%s%s", "Hi, ", name);
     char msg2[256];
@@ -121,39 +118,26 @@ int main(void)
     printf("%s\n", __tmp_0);
     printf("\n");
     int score = 91;
-    if ((score >= 90))
-    {
+    if ((score >= 90)) {
         printf("%d\n", 1);
-    }
-    else if ((score >= 80))
-    {
+    } else if ((score >= 80)) {
         printf("%d\n", 2);
-    }
-    else if ((score >= 70))
-    {
+    } else if ((score >= 70)) {
         printf("%d\n", 3);
-    }
-    else
-    {
+    } else {
         printf("%d\n", 4);
     }
     int x = 10;
-    if ((x > 0))
-    {
-        if ((x > 5))
-        {
+    if ((x > 0)) {
+        if ((x > 5)) {
             printf("%d\n", x);
-        }
-        else
-        {
+        } else {
             printf("%d\n", 0);
         }
     }
     int i = 0;
-    while ((i < 10))
-    {
-        if ((i == 5))
-        {
+    while ((i < 10)) {
+        if ((i == 5)) {
             break;
         }
         i += 1;
@@ -161,42 +145,34 @@ int main(void)
     printf("%d\n", i);
     int total = 0;
     int j = 0;
-    while ((j < 6))
-    {
+    while ((j < 6)) {
         j += 1;
-        if ((j == 3))
-        {
+        if ((j == 3)) {
             continue;
         }
         total += j;
     }
     printf("%d\n", total);
     int acc = 0;
-    for (int k = 0; k < 5; k++)
-    {
+    for (int k = 0; k < 5; k++) {
         acc += k;
     }
     printf("%d\n", acc);
     int outer_sum = 0;
-    for (int p = 0; p < 3; p++)
-    {
-        for (int q = 0; q < 3; q++)
-        {
+    for (int p = 0; p < 3; p++) {
+        for (int q = 0; q < 3; q++) {
             outer_sum += 1;
         }
     }
     printf("%d\n", outer_sum);
     int found = 0;
-    for (int r = 0; r < 10; r++)
-    {
-        if ((r == 4))
-        {
+    for (int r = 0; r < 10; r++) {
+        if ((r == 4)) {
             break;
         }
     }
     printf("%d\n", found);
-    if (d)
-    {
+    if (d) {
     }
     say_hello("Bob");
     add(1, 2);
@@ -216,32 +192,28 @@ int main(void)
     printf("%d\n", r7);
     int r8 = square(square(2));
     printf("%d\n", r8);
-    if ((get_zero() == 0))
-    {
+    if ((get_zero() == 0)) {
         printf("%d\n", 1);
     }
     counter = 99;
     printf("%d\n", counter);
     int bit = d;
-    if (bit)
-    {
+    if (bit) {
         printf("%d\n", 1);
     }
     double ratio = 1.5;
-    if ((ratio > 1.0))
-    {
+    if ((ratio > 1.0)) {
         printf("%d\n", 1);
     }
     double pi = 3.14159;
     double radius = 5.0;
     double area = ((pi * radius) * radius);
     printf("%f\n", area);
-    const char *plain_str = "Good morning";
+    const char * plain_str = "Good morning";
     printf("%s\n", plain_str);
     int limit = 4;
     int sum2 = 0;
-    for (int s = 0; s < limit; s++)
-    {
+    for (int s = 0; s < limit; s++) {
         sum2 += s;
     }
     printf("%d\n", sum2);

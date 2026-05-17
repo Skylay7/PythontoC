@@ -15,8 +15,8 @@ typedef struct ASTNode
     SemanticType inferred_type; // STYPE_UNKNOWN until semantic analysis runs
 
     struct ASTNode **children; // owned dynamic array, freed by ast_node_free
-    int children_count;
-    int children_capacity;
+    int children_count;        // number of children currently in the array
+    int children_capacity;     // allocated capacity of the children array
 
     int line;
     int column;

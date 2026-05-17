@@ -385,20 +385,14 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
                                       node->line, node->column, STAGE_SEMANTIC);
         }
         for (int i = 1; i < node->children_count; i++)
-        {
-            push_scope(sa);
             analyze_node(sa, node->children[i]);
-            pop_scope(sa);
-        }
         return;
     }
 
     case NODE_ELSE:
     {
-        push_scope(sa);
         for (int i = 0; i < node->children_count; i++)
             analyze_node(sa, node->children[i]);
-        pop_scope(sa);
         return;
     }
 
@@ -409,11 +403,8 @@ static void analyze_node(SemanticAnalyzer *sa, ASTNode *node)
             symbol_table_set(sa->current, node->children[0]->value, STYPE_INT);
         if (node->children_count > 1)
             infer_type(sa, node->children[1]);
-
-        push_scope(sa);
         if (node->children_count > 2)
             analyze_node(sa, node->children[2]);
-        pop_scope(sa);
         return;
     }
 

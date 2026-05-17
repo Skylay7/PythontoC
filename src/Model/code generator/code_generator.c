@@ -391,20 +391,13 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
         gen_expr(cg, node->children_count > 0 ? node->children[0] : NULL);
         buf_write(cg->buf, ") {\n");
         cg->indent++;
-        cg_scope_enter(cg);
         if (node->children_count > 1)
             gen_stmt(cg, node->children[1]);
-        cg_scope_exit(cg);
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}");
-        // elif/else siblings are extra children; each gets the wrapper scope the IF pushed for it
         for (int i = 2; i < node->children_count; i++)
-        {
-            cg_scope_enter(cg);
             gen_stmt(cg, node->children[i]);
-            cg_scope_exit(cg);
-        }
         buf_write(cg->buf, "\n");
         break;
     }
@@ -415,19 +408,13 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
         gen_expr(cg, node->children_count > 0 ? node->children[0] : NULL);
         buf_write(cg->buf, ") {\n");
         cg->indent++;
-        cg_scope_enter(cg);
         if (node->children_count > 1)
             gen_stmt(cg, node->children[1]);
-        cg_scope_exit(cg);
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}");
         for (int i = 2; i < node->children_count; i++)
-        {
-            cg_scope_enter(cg);
             gen_stmt(cg, node->children[i]);
-            cg_scope_exit(cg);
-        }
         break;
     }
 
@@ -435,10 +422,8 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
     {
         buf_write(cg->buf, " else {\n");
         cg->indent++;
-        cg_scope_enter(cg);
         for (int i = 0; i < node->children_count; i++)
             gen_stmt(cg, node->children[i]);
-        cg_scope_exit(cg);
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}");
@@ -452,10 +437,8 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
         gen_expr(cg, node->children_count > 0 ? node->children[0] : NULL);
         buf_write(cg->buf, ") {\n");
         cg->indent++;
-        cg_scope_enter(cg);
         if (node->children_count > 1)
             gen_stmt(cg, node->children[1]);
-        cg_scope_exit(cg);
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}\n");
@@ -481,9 +464,7 @@ static void gen_stmt(CodeGen *cg, const ASTNode *node)
         buf_write(cg->buf, vname);
         buf_write(cg->buf, "++) {\n");
         cg->indent++;
-        cg_scope_enter(cg);
         gen_stmt(cg, body);
-        cg_scope_exit(cg);
         cg->indent--;
         write_indent(cg);
         buf_write(cg->buf, "}\n");
